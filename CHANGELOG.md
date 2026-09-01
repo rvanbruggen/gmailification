@@ -10,6 +10,13 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-01
+
+### Changed
+- Documentation and example config now use generic placeholder accounts
+  (alice/bob @ *.example) instead of the original author's real mailboxes;
+  the git history was rewritten to scrub those addresses as well.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added

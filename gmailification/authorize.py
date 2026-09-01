@@ -1,6 +1,6 @@
 """OAuth consent flow for a destination Gmail account.
 
-    python -m gmailification.authorize --user rik [--local | --manual]
+    python -m gmailification.authorize --user alice [--local | --manual]
 
 --local  : opens a browser on this machine (admin authorizing their own account).
 --manual : remote-friendly flow for family members. Prints a URL you can send

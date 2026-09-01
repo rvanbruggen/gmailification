@@ -53,16 +53,16 @@ stolen token could add mail to an inbox but never read it.
 ## How it works
 
 ```
-   ┌────────────────────────  poll (IMAP, read-only)  ───────────────────┐
-   │                                                                     │
-   │   alice@old-company.example     (Google Workspace, app password) ──┐        │
-   │   alice@legacy.example    (Google Workspace, app password) ──┤        │
-   │   alice@isp.example  (plain IMAP) ─────────────────┼──► alice@gmail.com
-   │   club@association.example       (plain IMAP) ─────────────────┘   (Gmail API messages.import,
-   │                                                                 labels Pulled/<source>)
+   ┌────────────────────────  poll (IMAP, read-only)  ──────────────────┐
+   │                                                                    │
+   │   alice@old-company.example  (Google Workspace, app password) ──┐  │
+   │   alice@legacy.example       (Google Workspace, app password) ──┤  │
+   │   alice@isp.example          (plain IMAP) ──────────────────────┼──► alice@gmail.com
+   │   club@association.example   (plain IMAP) ──────────────────────┘   (Gmail API messages.import,
+   │                                                                     labels Pulled/<source>)
    │   bob@old-company.example    (Google Workspace, app password) ──┐
-   │   info@association.example         (plain IMAP) ─────────────────┼──► bob@gmail.com
-   └────────────────────────────────────────────────────────────┘
+   │   info@association.example   (plain IMAP) ──────────────────────┼──► bob@gmail.com
+   └─────────────────────────────────────────────────────────────────┘
 ```
 
 One code path for all sources: IMAP polling (default every 3 minutes). Google
@@ -137,7 +137,7 @@ flow, including sending the consent URL to a family member who isn't at the
 machine. The equivalent CLI also exists:
 
 ```bash
-docker compose run --rm gmailification python -m gmailification.authorize --user rik --local
+docker compose run --rm gmailification python -m gmailification.authorize --user alice --local
 ```
 
 (`--manual` instead of `--local` for the remote flow: it prints a URL you can
@@ -223,7 +223,7 @@ rewrites `config.yaml`, so hand-written YAML comments don't survive it.
 | Web UI | `http://dockerhost:8377/` |
 | Health (Docker) | built-in `HEALTHCHECK` hits `/healthz` |
 | Health (machine) | `curl http://dockerhost:8377/status` — per-source counters and errors |
-| Force a poll *now* (e.g. a 2FA code) | UI button, or `curl -X POST http://dockerhost:8377/poll` (optionally `?user=rik`) |
+| Force a poll *now* (e.g. a 2FA code) | UI button, or `curl -X POST http://dockerhost:8377/poll` (optionally `?user=alice`) |
 | One-shot run | `docker compose run --rm gmailification --once` |
 | Logs as JSON | set `GMAILIFICATION_LOG_JSON=1` in `.env` |
 
