@@ -1,0 +1,70 @@
+# gmailification configuration — copy to config/config.yaml and edit.
+# config/config.yaml is gitignored: it contains account layout (not secrets;
+# secrets live in .env / mounted files) but there is no reason to publish it.
+
+poll_interval_seconds: 180      # how often to check the sources
+alert_after_hours: 6            # alert when a source has been failing this long
+realert_after_hours: 24         # repeat the alert while still failing
+http_bind: 0.0.0.0              # LAN health/status/poll endpoint
+http_port: 8377
+oauth_client_file: /config/client_secret.json
+db_path: /data/gmailification.db
+heartbeat_file: /data/heartbeat
+
+# Be a polite citizen on a shared broadband line.
+throttle:
+  bandwidth_limit_kbps: 0       # 0 = unlimited; e.g. 512 to cap at ~0.5 MB/s
+  max_messages_per_cycle: 200   # per source per cycle; the rest follow next cycle
+  message_pause_seconds: 0      # fixed extra pause between messages
+
+admin:
+  user: rik                     # receives copies of alerts + OAuth-broken alerts
+  copy_alerts: true
+
+users:
+  - name: rik
+    destination:
+      email: alice@gmail.com
+      token_file: /data/tokens/rik.json
+    sources:
+      - name: old-company.example
+        host: imap.gmail.com          # legacy free Google Workspace, via app password
+        username: alice@old-company.example
+        password_env: GMAILIFICATION_SRC_ALICE_OLD_COMPANY
+        label: Pulled/old-company.example
+        # folders: [INBOX]            # default
+        # backfill_days: 7            # import the last N days on first run (default 0)
+        # after_import: keep          # keep (default) = copy, source untouched;
+        #                             # delete = move, expunge from the source
+        #                             # after a confirmed import into Gmail
+      - name: legacy.example
+        host: imap.gmail.com          # legacy free Google Workspace, via app password
+        username: alice@legacy.example
+        password_env: GMAILIFICATION_SRC_ALICE_LEGACY
+        label: Pulled/legacy.example
+      - name: telenet
+        host: imap.isp.example
+        username: alice@isp.example
+        password_env: GMAILIFICATION_SRC_ALICE_ISP
+        label: Pulled/telenet
+      - name: trol
+        host: mail.association.example            # adjust to the club's IMAP server
+        username: club@association.example
+        password_env: GMAILIFICATION_SRC_CLUB
+        label: Pulled/trol
+
+  - name: mark
+    destination:
+      email: bob@gmail.com
+      token_file: /data/tokens/mark.json
+    sources:
+      - name: old-company.example
+        host: imap.gmail.com
+        username: bob@old-company.example
+        password_env: GMAILIFICATION_SRC_BOB_OLD_COMPANY
+        label: Pulled/old-company.example
+      - name: trol
+        host: mail.association.example
+        username: info@association.example
+        password_env: GMAILIFICATION_SRC_BOB_CLUB
+        label: Pulled/trol

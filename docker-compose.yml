@@ -1,0 +1,27 @@
+services:
+  gmailification:
+    build: .
+    image: gmailification:latest
+    container_name: gmailification
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - GMAILIFICATION_CONFIG=/config/config.yaml
+    volumes:
+      # Config + OAuth client secret. Read-write so the web UI can save
+      # config.yaml edits; make sure the directory is writable by uid 1000
+      # (the container user), e.g. `chown -R 1000 config` on the host.
+      - ./config:/config
+      # State: SQLite db, OAuth tokens, heartbeat. Stays on this host.
+      - gmailification-data:/data
+    ports:
+      # LAN-only web interface (dashboard + configuration) and machine
+      # endpoints. /healthz, /status and POST /poll are unauthenticated; the
+      # rest requires GMAILIFICATION_ADMIN_PASSWORD (basic auth). If the
+      # Docker host is reachable from outside your LAN, restrict this
+      # (e.g. "127.0.0.1:8377:8377" or firewall it).
+      - "8377:8377"
+
+volumes:
+  gmailification-data:

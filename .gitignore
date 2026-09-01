@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime state and secrets — never commit these
+.env
+data/
+config/config.yaml
+config/client_secret.json
+*.db
+tokens/
+heartbeat
+
+# Local dev launcher (points at session-specific scratch paths)
+.claude/launch.json
+.DS_Store
