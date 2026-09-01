@@ -78,18 +78,18 @@ class ConfigStoreTest(unittest.TestCase):
         raw = self.store.read_raw()
         self.store.upsert_source(raw, "rik", {
             "name": "trol", "host": "mail.trol.example", "username": "x@trol.example",
-            "password": "hunter2", "after_import": "delete",
+            "password": "test-dummy-password", "after_import": "delete",
         })
         cfg = self.store.write_raw(raw)
         src = next(s for s in cfg.user("rik").sources if s.name == "trol")
-        self.assertEqual(src.password, "hunter2")
+        self.assertEqual(src.password, "test-dummy-password")
         self.assertEqual(src.after_import, "delete")
         pw_path = os.path.join(self.secrets, "rik__trol.pw")
         self.assertTrue(os.path.exists(pw_path))
         self.assertEqual(stat.S_IMODE(os.stat(pw_path).st_mode), 0o600)
         # Password never lands in the YAML itself.
         with open(self.path) as fh:
-            self.assertNotIn("hunter2", fh.read())
+            self.assertNotIn("test-dummy-password", fh.read())
 
     def test_edit_source_keeps_password_when_blank(self):
         raw = self.store.read_raw()

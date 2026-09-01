@@ -74,7 +74,7 @@ class SyncTest(unittest.TestCase):
         self.dest = FakeDest()
         self.source = SourceConfig(
             user="rik", name="telenet", host="imap.example.com",
-            username="u", password="p", label="Pulled/telenet",
+            username="u", password="test-password", label="Pulled/telenet",
         )
         FakeImap.mailbox = {1: _msg(1), 2: _msg(2), 3: _msg(3)}
         FakeImap.uidvalidity = 100
@@ -128,7 +128,7 @@ class SyncTest(unittest.TestCase):
 
     def test_backfill_days_on_first_run(self):
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7,
         )
         result = self._run()
@@ -136,7 +136,7 @@ class SyncTest(unittest.TestCase):
 
     def test_per_cycle_message_cap(self):
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7,
         )
         throttle = ThrottleConfig(max_messages_per_cycle=2)
@@ -175,7 +175,7 @@ class SyncTest(unittest.TestCase):
 
     def test_delete_mode_moves_only_transferred_messages(self):
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7, after_import="delete",
         )
         result = self._run()
@@ -190,7 +190,7 @@ class SyncTest(unittest.TestCase):
 
     def test_delete_mode_spares_failed_imports(self):
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7, after_import="delete",
         )
 
@@ -216,7 +216,7 @@ class SyncTest(unittest.TestCase):
         # Import msg 1-3 in keep mode first...
         keep_source = self.source
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7,
         )
         self._run()
@@ -225,7 +225,7 @@ class SyncTest(unittest.TestCase):
         FakeImap.uidvalidity = 200
         FakeImap.mailbox = {10: _msg(1), 11: _msg(2), 12: _msg(3)}
         self.source = SourceConfig(
-            user="rik", name="telenet", host="h", username="u", password="p",
+            user="rik", name="telenet", host="h", username="u", password="test-password",
             label="Pulled/telenet", backfill_days=7, after_import="delete",
         )
         result = self._run()

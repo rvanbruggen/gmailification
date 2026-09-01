@@ -33,7 +33,7 @@ class WebTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ["TEST_WEB_PW"] = "x"
-        os.environ[ADMIN_PASSWORD_ENV] = "adminpw"
+        os.environ[ADMIN_PASSWORD_ENV] = "test-admin-password"
         cls.dir = tempfile.TemporaryDirectory()
         cls.config_path = os.path.join(cls.dir.name, "config.yaml")
         raw = dict(BASE)
@@ -55,7 +55,7 @@ class WebTest(unittest.TestCase):
     def _request(self, path, data=None, auth=True, headers=None):
         req = urllib.request.Request(self.base + path, data=data, headers=headers or {})
         if auth:
-            cred = base64.b64encode(b"admin:adminpw").decode()
+            cred = base64.b64encode(b"admin:test-admin-password").decode()
             req.add_header("Authorization", f"Basic {cred}")
         return urllib.request.urlopen(req, timeout=10)
 
@@ -90,7 +90,7 @@ class WebTest(unittest.TestCase):
 
     def test_add_edit_delete_source_via_forms(self):
         body = ("name=trol&host=mail.trol.example&port=993&username=x%40trol.example"
-                "&password=hunter2&label=&folders=INBOX&backfill_days=0&after_import=keep")
+                "&password=test-dummy-password&label=&folders=INBOX&backfill_days=0&after_import=keep")
         resp = self._request("/users/rik/sources", data=body.encode())
         self.assertEqual(resp.status, 200)  # after redirect to the user page
         cfg, _ = self.app.snapshot()
@@ -100,7 +100,7 @@ class WebTest(unittest.TestCase):
         with open(self.config_path) as fh:
             on_disk = fh.read()
         self.assertIn("trol", on_disk)
-        self.assertNotIn("hunter2", on_disk)
+        self.assertNotIn("test-dummy-password", on_disk)
         # Edit: switch to move semantics.
         body = "name=trol&after_import=delete"
         self._request("/users/rik/sources", data=body.encode())

@@ -1,0 +1,10 @@
+# GitGuardian / ggshield configuration.
+# The test suite necessarily contains fake credentials (e.g.
+# "test-dummy-password") to exercise the credential-handling code paths.
+# They are fixtures, not secrets — real secrets live only in .env / mounted
+# files / the Docker data volume, all of which are gitignored.
+version: 2
+secret:
+  ignored_paths:
+    - "tests/**"
+    - "**/*.example"

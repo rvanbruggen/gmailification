@@ -29,12 +29,12 @@ class ConfigTest(unittest.TestCase):
             os.unlink(path)
 
     def test_minimal_config(self):
-        os.environ["TEST_GMAILIFICATION_PW"] = "s3cret"
+        os.environ["TEST_GMAILIFICATION_PW"] = "test-env-password"
         cfg = self._load(MINIMAL)
         self.assertEqual(len(cfg.users), 1)
         src = cfg.users[0].sources[0]
         self.assertEqual(src.key, "rik/telenet")
-        self.assertEqual(src.password, "s3cret")
+        self.assertEqual(src.password, "test-env-password")
         self.assertEqual(src.label, "Pulled/telenet")  # defaulted from name
         self.assertEqual(src.folders, ("INBOX",))
         self.assertEqual(cfg.poll_interval_seconds, 180)
@@ -48,12 +48,12 @@ class ConfigTest(unittest.TestCase):
 
     def test_password_file(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as fh:
-            fh.write("filepw\n")
+            fh.write("test-file-password\n")
             pw_path = fh.name
         try:
             cfg = self._load(MINIMAL.replace(
                 "password_env: TEST_GMAILIFICATION_PW", f"password_file: {pw_path}"))
-            self.assertEqual(cfg.users[0].sources[0].password, "filepw")
+            self.assertEqual(cfg.users[0].sources[0].password, "test-file-password")
         finally:
             os.unlink(pw_path)
 
