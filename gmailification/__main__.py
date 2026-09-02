@@ -13,12 +13,14 @@ import sqlite3
 import sys
 import time
 
+from concurrent.futures import Future, ThreadPoolExecutor
+
 from . import __version__
 from .alerts import check_and_alert
 from .config import ConfigError
 from .gmail_dest import ReauthNeeded
 from .state import Database
-from .sync import run_cycle
+from .sync import run_cycle, sync_source
 from .util import setup_logging
 from .web import AppState, start_server
 
@@ -92,54 +94,96 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("no users configured yet — open the web UI on port %d to add one",
                     app.cfg.http_port)
 
-    only_user = args.user
-    forced = False
-    next_run: dict[str, float] = {}  # source_key -> when it is next due
+    if args.once:
+        cfg, dests = app.snapshot()
+        stats = run_cycle(cfg, db, dests, only_user=args.user)
+        check_and_alert(cfg, db, dests)
+        db.prune_history(cfg.history_days)
+        write_heartbeat(cfg.heartbeat_file)
+        log.info("cycle done: %d source(s) polled, %d imported, %d failing",
+                 len(stats.results), stats.imported, len(stats.failed))
+        return 1 if stats.failed else 0
+
+    # Each source polls on its own schedule via a shared worker pool, and the
+    # scheduler never blocks on a running poll — so one slow source (e.g. a
+    # throttled backlog import taking many minutes) cannot delay the others.
+    next_run: dict[str, float] = {}     # source_key -> when it is next due
+    in_flight: dict[str, Future] = {}   # source_key -> its running poll
+    poll_started: dict[str, float] = {}  # source_key -> when that poll began
+    last_maintenance = 0.0
+    pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sync")
     try:
         while True:
-            started = time.time()
-            app.shared.cycle_started_at = started
-            cfg, dests = app.snapshot()
-            candidates = [s for u in cfg.users if only_user in (None, u.name)
-                          for s in u.sources]
-            # A forced poll (or --once) ignores schedules; otherwise each
-            # source runs on its own poll interval. Unknown sources (first
-            # loop, or newly configured) are due immediately.
-            if forced or args.once:
-                due = candidates
-            else:
-                due = [s for s in candidates if next_run.get(s.key, 0.0) <= started]
-            stats = run_cycle(cfg, db, dests, sources=due)
-            for s in due:
-                next_run[s.key] = time.time() + s.poll_interval_seconds
-            check_and_alert(cfg, db, dests)
-            db.prune_history(cfg.history_days)
-            app.shared.last_cycle_at = time.time()
-            app.shared.cycle_started_at = None
-            write_heartbeat(cfg.heartbeat_file)
-            if due:
-                log.info("cycle done in %.1fs: %d source(s) polled, %d imported, %d failing",
-                         time.time() - started, len(due), stats.imported, len(stats.failed))
-            if args.once:
-                return 1 if stats.failed else 0
-            # Sleep until the earliest due source — but wake at least every
-            # global interval so the heartbeat and healthcheck stay fresh.
             now = time.time()
-            upcoming = [next_run.get(s.key, now) for u in cfg.users
-                        if args.user in (None, u.name) for s in u.sources]
-            wait = min(upcoming) - now if upcoming else cfg.poll_interval_seconds
-            wait = max(1.0, min(wait, cfg.poll_interval_seconds))
+            cfg, dests = app.snapshot()
+            sources = {s.key: s for u in cfg.users if args.user in (None, u.name)
+                       for s in u.sources}
+            users_by_name = {u.name: u for u in cfg.users}
+
+            # Reap finished polls and schedule their next run.
+            for key in [k for k, f in in_flight.items() if f.done()]:
+                fut = in_flight.pop(key)
+                began = poll_started.pop(key, now)
+                try:
+                    result = fut.result()
+                except Exception as exc:  # sync_source catches its own; be safe
+                    log.error("%s: poll crashed: %s", key, exc)
+                    result = None
+                src = sources.get(key)
+                if src is not None:
+                    next_run[key] = time.time() + src.poll_interval_seconds
+                if result is not None and result.ok and src is not None:
+                    u = users_by_name.get(src.user)
+                    if u is not None:
+                        # Any source reaching the user's Gmail clears the
+                        # destination-health pseudo source.
+                        db.record_success(u.destination_key, u.name)
+                took = time.time() - began
+                (log.info if took >= 10 else log.debug)(
+                    "%s: poll finished in %.1fs", key, took)
+
+            # Launch every due source that isn't already running. Unknown
+            # sources (first loop, or newly configured) are due immediately.
+            for key, src in sources.items():
+                if key not in in_flight and next_run.get(key, 0.0) <= now:
+                    in_flight[key] = pool.submit(sync_source, db, src,
+                                                 dests[src.user], src.throttle)
+                    poll_started[key] = now
+
+            if now - last_maintenance >= 60:
+                check_and_alert(cfg, db, dests)
+                db.prune_history(cfg.history_days)
+                write_heartbeat(cfg.heartbeat_file)
+                for key, began in poll_started.items():
+                    if now - began >= app.shared.MAX_POLL_SECONDS:
+                        log.warning("%s: poll running for %.0f minutes — stuck?",
+                                    key, (now - began) / 60)
+                last_maintenance = now
+
+            # Publish fresh copies (not mutations) for lock-free web reads.
+            app.shared.polling = dict(poll_started)
+            app.shared.next_due = dict(next_run)
+            app.shared.last_cycle_at = time.time()
+
+            # Sleep until the next source is due — checking running polls every
+            # second, and waking immediately for on-demand poll requests.
+            now = time.time()
+            upcoming = [next_run.get(k, now) for k in sources if k not in in_flight]
+            wait = (min(upcoming) - now) if upcoming else cfg.poll_interval_seconds
+            wait = max(0.25, min(wait, 60.0))
+            if in_flight:
+                wait = min(wait, 1.0)
             if app.shared.force_event.wait(timeout=wait):
-                only_user = app.shared.take_poll_request()
-                forced = True
-                log.info("on-demand poll requested (user=%s)", only_user or "all")
-            else:
-                only_user = args.user
-                forced = False
+                forced_user = app.shared.take_poll_request()
+                log.info("on-demand poll requested (user=%s)", forced_user or "all")
+                for key, src in sources.items():
+                    if forced_user in (None, src.user):
+                        next_run[key] = 0.0
     except KeyboardInterrupt:
         log.info("shutting down")
         return 0
     finally:
+        pool.shutdown(wait=False, cancel_futures=True)
         if server is not None:
             server.shutdown()
 

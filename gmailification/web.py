@@ -47,8 +47,11 @@ class Shared:
 
     def __init__(self, poll_interval: int):
         self.poll_interval = poll_interval
-        self.last_cycle_at: float | None = None
-        self.cycle_started_at: float | None = None
+        self.last_cycle_at: float | None = None   # last scheduler pass
+        # Live per-source view, replaced wholesale by the scheduler each pass
+        # (never mutated in place) so web threads can read without locking.
+        self.polling: dict[str, float] = {}       # source_key -> poll started at
+        self.next_due: dict[str, float] = {}      # source_key -> next poll due at
         self.force_event = threading.Event()
         self.force_user: str | None = None
         self._lock = threading.Lock()
@@ -66,16 +69,16 @@ class Shared:
             self.force_event.clear()
             return user
 
-    # A throttled backlog import (per-cycle message cap) can legitimately keep
-    # one cycle running far longer than the poll interval; only a cycle stuck
-    # beyond this many seconds counts as unhealthy.
-    MAX_CYCLE_SECONDS = 2 * 3600
+    # A single poll (e.g. a throttled backlog import) may legitimately run for
+    # many minutes without blocking anything else; only a poll stuck beyond
+    # this cap makes the app unhealthy.
+    MAX_POLL_SECONDS = 2 * 3600
 
     def healthy(self) -> bool:
         now = time.time()
-        started = self.cycle_started_at
-        if started is not None and now - started < self.MAX_CYCLE_SECONDS:
-            return True
+        polling = self.polling
+        if polling and now - min(polling.values()) >= self.MAX_POLL_SECONDS:
+            return False  # a poll has been stuck for hours
         if self.last_cycle_at is None:
             return False
         return now - self.last_cycle_at < max(3 * self.poll_interval, 600)
@@ -368,7 +371,7 @@ def _make_handler(app: AppState, db: Database):
                     "status": "ok" if ok else "stale",
                     "version": __version__,
                     "last_cycle_at": app.shared.last_cycle_at,
-                    "cycle_started_at": app.shared.cycle_started_at,
+                    "polls_running": app.shared.polling,
                 })
                 return
             if path == "/status":
@@ -541,9 +544,11 @@ def _make_handler(app: AppState, db: Database):
             if not self._editable:
                 body.append(_DISABLED_NOTICE)
             last = app.shared.last_cycle_at
-            body.append(f"<p class='muted'>Last cycle: "
+            running = len(app.shared.polling)
+            body.append(f"<p class='muted'>Scheduler last ran: "
                         f"{fmt_local(last, cfg.timezone, '%Y-%m-%d %H:%M:%S %Z') if last else 'not yet'}"
-                        f" &middot; polling every {cfg.poll_interval_seconds}s</p>")
+                        f" &middot; {running} poll(s) running"
+                        f" &middot; default interval {cfg.poll_interval_seconds}s</p>")
             if self._editable:
                 body.append("<form class='inline' method='post' action='/poll'>"
                             "<button type='submit'>Poll all now</button></form>")
@@ -560,6 +565,19 @@ def _make_handler(app: AppState, db: Database):
                     else:
                         health = (f"<span class='pill p-bad' title='{_esc(st.last_error or '')}'>"
                                   f"failing &times;{st.consecutive_failures}</span>")
+                    poll_began = app.shared.polling.get(s.key)
+                    due = app.shared.next_due.get(s.key)
+                    if poll_began is not None:
+                        mins = (now - poll_began) / 60
+                        activity = ("syncing now" if mins < 1
+                                    else f"syncing now &middot; {mins:.0f}m")
+                        health += f" <span class='pill p-warn'>{activity}</span>"
+                    elif due is not None:
+                        wait_s = due - now
+                        activity = ("next poll: due now" if wait_s <= 1
+                                    else f"next poll in {wait_s:.0f}s" if wait_s < 120
+                                    else f"next poll in {wait_s / 60:.0f}m")
+                        health += f"<div class='muted' style='font-size:.72rem'>{activity}</div>"
                     mode = "move" if s.after_import == "delete" else "copy"
                     strip = _strip_svg(by_source.get(s.key, []), day_ago, now,
                                        buckets=48, tzname=cfg.timezone)

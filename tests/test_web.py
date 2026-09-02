@@ -133,6 +133,22 @@ class WebTest(unittest.TestCase):
         self.assertIn("svg class='strip'", html.replace('"', "'"))
         self.assertIn("kaput", html)
 
+    def test_dashboard_shows_live_poll_status(self):
+        import time
+        now = time.time()
+        self.app.shared.polling = {"rik/telenet": now - 300}
+        try:
+            html = self._request("/").read().decode()
+            self.assertIn("syncing now", html)
+        finally:
+            self.app.shared.polling = {}
+        self.app.shared.next_due = {"rik/telenet": now + 45}
+        try:
+            html = self._request("/").read().decode()
+            self.assertIn("next poll in", html)
+        finally:
+            self.app.shared.next_due = {}
+
     def test_invalid_edit_returns_400(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._request("/users/rik/sources", data=b"name=nopw&host=h&username=u")
@@ -160,32 +176,33 @@ class SharedHealthTest(unittest.TestCase):
         from gmailification.web import Shared
         return Shared(poll_interval=300)
 
-    def test_unhealthy_before_first_cycle(self):
+    def test_unhealthy_before_first_scheduler_pass(self):
         self.assertFalse(self._shared().healthy())
 
-    def test_healthy_after_recent_cycle(self):
+    def test_healthy_after_recent_scheduler_pass(self):
         import time
         shared = self._shared()
         shared.last_cycle_at = time.time()
         self.assertTrue(shared.healthy())
 
-    def test_stale_cycle_unhealthy(self):
+    def test_stale_scheduler_unhealthy(self):
         import time
         shared = self._shared()
         shared.last_cycle_at = time.time() - 2000  # > max(3*300, 600)
         self.assertFalse(shared.healthy())
 
-    def test_running_cycle_keeps_healthy_even_when_stale(self):
+    def test_long_running_poll_stays_healthy(self):
         import time
         shared = self._shared()
-        shared.last_cycle_at = time.time() - 2000
-        shared.cycle_started_at = time.time() - 1500  # long throttled import
+        shared.last_cycle_at = time.time()
+        shared.polling = {"rik/devrev.ai": time.time() - 1500}  # throttled backlog
         self.assertTrue(shared.healthy())
 
-    def test_cycle_stuck_beyond_cap_is_unhealthy(self):
+    def test_poll_stuck_beyond_cap_is_unhealthy(self):
         import time
         shared = self._shared()
-        shared.cycle_started_at = time.time() - shared.MAX_CYCLE_SECONDS - 60
+        shared.last_cycle_at = time.time()  # scheduler alive, but a poll wedged
+        shared.polling = {"rik/devrev.ai": time.time() - shared.MAX_POLL_SECONDS - 60}
         self.assertFalse(shared.healthy())
 
 

@@ -73,6 +73,7 @@ class GmailDestination:
         self._lock = threading.RLock()
         self._creds: Credentials | None = None
         self._label_ids: dict[str, str] = {}
+        self._local = threading.local()  # per-thread service (keep-alive HTTP)
 
     # -- auth --------------------------------------------------------------
 
@@ -106,9 +107,17 @@ class GmailDestination:
         os.replace(tmp, self._token_file)
 
     def _service(self):
-        # Build per call site (thread): googleapiclient http objects are not
-        # thread-safe; credentials refresh is serialized via self._lock.
-        return build("gmail", "v1", credentials=self.credentials(), cache_discovery=False)
+        # One service per thread, cached: googleapiclient http objects are not
+        # thread-safe, but rebuilding per call cost a fresh TLS handshake for
+        # every message. Credentials refresh stays serialized via self._lock
+        # (and the cached AuthorizedHttp re-reads the same Credentials object).
+        svc = getattr(self._local, "service", None)
+        creds = self.credentials()  # keeps the token fresh / persisted
+        if svc is None or getattr(self._local, "creds", None) is not creds:
+            svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+            self._local.service = svc
+            self._local.creds = creds
+        return svc
 
     # -- labels ------------------------------------------------------------
 
