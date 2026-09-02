@@ -48,6 +48,7 @@ class Shared:
     def __init__(self, poll_interval: int):
         self.poll_interval = poll_interval
         self.last_cycle_at: float | None = None
+        self.cycle_started_at: float | None = None
         self.force_event = threading.Event()
         self.force_user: str | None = None
         self._lock = threading.Lock()
@@ -65,10 +66,19 @@ class Shared:
             self.force_event.clear()
             return user
 
+    # A throttled backlog import (per-cycle message cap) can legitimately keep
+    # one cycle running far longer than the poll interval; only a cycle stuck
+    # beyond this many seconds counts as unhealthy.
+    MAX_CYCLE_SECONDS = 2 * 3600
+
     def healthy(self) -> bool:
+        now = time.time()
+        started = self.cycle_started_at
+        if started is not None and now - started < self.MAX_CYCLE_SECONDS:
+            return True
         if self.last_cycle_at is None:
             return False
-        return time.time() - self.last_cycle_at < max(3 * self.poll_interval, 600)
+        return now - self.last_cycle_at < max(3 * self.poll_interval, 600)
 
 
 class AppState:
@@ -358,6 +368,7 @@ def _make_handler(app: AppState, db: Database):
                     "status": "ok" if ok else "stale",
                     "version": __version__,
                     "last_cycle_at": app.shared.last_cycle_at,
+                    "cycle_started_at": app.shared.cycle_started_at,
                 })
                 return
             if path == "/status":

@@ -155,5 +155,39 @@ class WebTest(unittest.TestCase):
         self.assertNotEqual(cfg.poll_interval_seconds, 55)
 
 
+class SharedHealthTest(unittest.TestCase):
+    def _shared(self):
+        from gmailification.web import Shared
+        return Shared(poll_interval=300)
+
+    def test_unhealthy_before_first_cycle(self):
+        self.assertFalse(self._shared().healthy())
+
+    def test_healthy_after_recent_cycle(self):
+        import time
+        shared = self._shared()
+        shared.last_cycle_at = time.time()
+        self.assertTrue(shared.healthy())
+
+    def test_stale_cycle_unhealthy(self):
+        import time
+        shared = self._shared()
+        shared.last_cycle_at = time.time() - 2000  # > max(3*300, 600)
+        self.assertFalse(shared.healthy())
+
+    def test_running_cycle_keeps_healthy_even_when_stale(self):
+        import time
+        shared = self._shared()
+        shared.last_cycle_at = time.time() - 2000
+        shared.cycle_started_at = time.time() - 1500  # long throttled import
+        self.assertTrue(shared.healthy())
+
+    def test_cycle_stuck_beyond_cap_is_unhealthy(self):
+        import time
+        shared = self._shared()
+        shared.cycle_started_at = time.time() - shared.MAX_CYCLE_SECONDS - 60
+        self.assertFalse(shared.healthy())
+
+
 if __name__ == "__main__":
     unittest.main()

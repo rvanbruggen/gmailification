@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import socket
 import sqlite3
 import sys
 import time
@@ -55,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     setup_logging()
+    # The Gmail API client (httplib2) creates sockets with no timeout, so a
+    # dead connection mid-upload would block its sync thread — and the whole
+    # cycle — forever. IMAP already passes explicit timeouts, which override
+    # this default.
+    socket.setdefaulttimeout(120)
     try:
         app = AppState(args.config)
     except ConfigError as exc:
@@ -92,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         while True:
             started = time.time()
+            app.shared.cycle_started_at = started
             cfg, dests = app.snapshot()
             candidates = [s for u in cfg.users if only_user in (None, u.name)
                           for s in u.sources]
@@ -108,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             check_and_alert(cfg, db, dests)
             db.prune_history(cfg.history_days)
             app.shared.last_cycle_at = time.time()
+            app.shared.cycle_started_at = None
             write_heartbeat(cfg.heartbeat_file)
             if due:
                 log.info("cycle done in %.1fs: %d source(s) polled, %d imported, %d failing",
