@@ -8,6 +8,7 @@ references an environment variable (``password_env``) or a mounted file
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 
 import yaml
@@ -15,6 +16,20 @@ import yaml
 
 class ConfigError(Exception):
     pass
+
+
+# Where an imported message lands in the destination Gmail:
+#   inbox   -> INBOX + UNREAD (normal received mail; the default)
+#   sent    -> Gmail's Sent view, already read, threaded, never in the inbox
+#   archive -> label only (All Mail), already read
+VALID_PLACES = ("inbox", "sent", "archive")
+
+
+@dataclass(frozen=True)
+class FolderConfig:
+    name: str
+    place: str = "inbox"
+    label: str = ""  # optional override of the source label
 
 
 @dataclass(frozen=True)
@@ -26,7 +41,7 @@ class SourceConfig:
     password: str
     label: str
     port: int = 993
-    folders: tuple[str, ...] = ("INBOX",)
+    folders: tuple[FolderConfig, ...] = (FolderConfig(name="INBOX"),)
     # On the very first run for a folder, how many days of existing mail to
     # backfill. 0 (default) = only mail that arrives after gmailification starts.
     backfill_days: int = 0
@@ -136,6 +151,62 @@ def _require(raw: dict, key: str, context: str):
     return raw[key]
 
 
+def _parse_folder(context: str, raw) -> FolderConfig:
+    if isinstance(raw, str):
+        raw = {"name": raw}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{context}: each folder must be a name or a mapping")
+    name = str(_require(raw, "name", f"{context} folder")).strip()
+    place = str(raw.get("place", "inbox")).strip().lower()
+    if place not in VALID_PLACES:
+        raise ConfigError(f"{context} folder {name!r}: place must be one of "
+                          f"{', '.join(VALID_PLACES)}, got {place!r}")
+    return FolderConfig(name=name, place=place, label=str(raw.get("label", "")))
+
+
+def parse_folder_text(text: str) -> list:
+    """Parse the compact UI syntax into raw YAML folder entries.
+
+    One folder per line (commas also separate); optional modifiers:
+        INBOX
+        [Gmail]/Sent Mail :: sent
+        Old/Archive :: archive :: Pulled/custom-label
+    """
+    entries: list = []
+    for chunk in re.split(r"[\n,]+", text or ""):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = [p.strip() for p in chunk.split("::")]
+        name = parts[0]
+        place = (parts[1].lower() if len(parts) > 1 and parts[1] else "inbox")
+        label = parts[2] if len(parts) > 2 else ""
+        if place not in VALID_PLACES:
+            raise ConfigError(f"folder {name!r}: place must be one of "
+                              f"{', '.join(VALID_PLACES)}, got {place!r}")
+        if place == "inbox" and not label:
+            entries.append(name)
+        else:
+            entry: dict = {"name": name, "place": place}
+            if label:
+                entry["label"] = label
+            entries.append(entry)
+    return entries
+
+
+def format_folder_text(folders: tuple[FolderConfig, ...]) -> str:
+    """Inverse of parse_folder_text, for pre-filling the UI edit form."""
+    lines = []
+    for f in folders:
+        line = f.name
+        if f.place != "inbox" or f.label:
+            line += f" :: {f.place}"
+        if f.label:
+            line += f" :: {f.label}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _parse_source(user: str, raw: dict) -> SourceConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"user {user}: each source must be a mapping")
@@ -146,6 +217,10 @@ def _parse_source(user: str, raw: dict) -> SourceConfig:
         folders = [folders]
     if not folders:
         raise ConfigError(f"{context}: folders must not be empty")
+    folder_cfgs = tuple(_parse_folder(context, f) for f in folders)
+    folder_names = [f.name for f in folder_cfgs]
+    if len(folder_names) != len(set(folder_names)):
+        raise ConfigError(f"{context}: duplicate folder names")
     after_import = str(raw.get("after_import", "keep"))
     if after_import not in ("keep", "delete"):
         raise ConfigError(f"{context}: after_import must be 'keep' or 'delete', got {after_import!r}")
@@ -157,7 +232,7 @@ def _parse_source(user: str, raw: dict) -> SourceConfig:
         username=str(_require(raw, "username", context)),
         password=_resolve_password(user, name, raw),
         label=str(raw.get("label") or f"Pulled/{name}"),
-        folders=tuple(str(f) for f in folders),
+        folders=folder_cfgs,
         backfill_days=int(raw.get("backfill_days", 0)),
         after_import=after_import,
     )

@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .config import AppConfig, SourceConfig, ThrottleConfig
+from .config import AppConfig, FolderConfig, SourceConfig, ThrottleConfig
 from .gmail_dest import GmailDestination, ReauthNeeded
 from .imap_source import ImapSource
 from .state import Database
@@ -57,9 +57,12 @@ def _throttle_pause(throttle: ThrottleConfig, transferred_bytes: int) -> None:
 
 def _sync_folder(
     db: Database, source: SourceConfig, dest: GmailDestination, imap: ImapSource,
-    folder: str, throttle: ThrottleConfig, budget: int | None
+    fcfg: FolderConfig, throttle: ThrottleConfig, budget: int | None
 ) -> tuple[int, int, int, int, int]:
     """Returns (imported, dupes, oversize, processed, deleted)."""
+    folder = fcfg.name
+    label = fcfg.label or source.label
+    is_inbox = fcfg.place == "inbox"
     imported = dupes = oversize = processed = 0
     delete_mode = source.after_import == "delete"
     to_expunge: list[int] = []
@@ -101,7 +104,9 @@ def _sync_folder(
                 transferred = True  # already in the destination
             else:
                 try:
-                    gmail_id = retry(lambda: dest.import_raw(raw, source.label), log=log)
+                    gmail_id = retry(lambda: dest.import_raw(
+                        raw, label, inbox=is_inbox, unread=is_inbox,
+                        sent=fcfg.place == "sent"), log=log)
                     db.record_import(source.user, key, source.key, gmail_id)
                     imported += 1
                     transferred = True
@@ -146,9 +151,9 @@ def sync_source(
         def attempt():
             remaining = budget
             with ImapSource(source) as imap:
-                for folder in source.folders:
+                for fcfg in source.folders:
                     i, d, o, processed, deleted = _sync_folder(
-                        db, source, dest, imap, folder, throttle, remaining)
+                        db, source, dest, imap, fcfg, throttle, remaining)
                     result.imported += i
                     result.skipped_dupes += d
                     result.skipped_oversize += o

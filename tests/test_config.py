@@ -2,7 +2,13 @@ import os
 import tempfile
 import unittest
 
-from gmailification.config import ConfigError, load_config
+from gmailification.config import (
+    ConfigError,
+    FolderConfig,
+    format_folder_text,
+    load_config,
+    parse_folder_text,
+)
 
 MINIMAL = """
 users:
@@ -36,7 +42,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(src.key, "rik/telenet")
         self.assertEqual(src.password, "test-env-password")
         self.assertEqual(src.label, "Pulled/telenet")  # defaulted from name
-        self.assertEqual(src.folders, ("INBOX",))
+        self.assertEqual(src.folders, (FolderConfig(name="INBOX"),))
         self.assertEqual(cfg.poll_interval_seconds, 180)
         self.assertEqual(cfg.throttle.max_messages_per_cycle, 200)
 
@@ -72,6 +78,49 @@ class ConfigTest(unittest.TestCase):
         os.environ["TEST_GMAILIFICATION_PW"] = "x"
         with self.assertRaises(ConfigError):
             self._load(MINIMAL + "\nadmin:\n  user: nobody\n")
+
+    def test_folder_mappings(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL + """
+        folders:
+          - INBOX
+          - name: "[Gmail]/Sent Mail"
+            place: sent
+          - name: Old
+            place: archive
+            label: Pulled/old
+""")
+        folders = cfg.users[0].sources[0].folders
+        self.assertEqual(folders[0], FolderConfig(name="INBOX"))
+        self.assertEqual(folders[1], FolderConfig(name="[Gmail]/Sent Mail", place="sent"))
+        self.assertEqual(folders[2], FolderConfig(name="Old", place="archive", label="Pulled/old"))
+
+    def test_invalid_folder_place_rejected(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        with self.assertRaises(ConfigError):
+            self._load(MINIMAL + """
+        folders:
+          - name: INBOX
+            place: outbox
+""")
+
+    def test_folder_text_roundtrip(self):
+        raw = parse_folder_text("INBOX\n[Gmail]/Sent Mail :: sent\nOld :: archive :: Pulled/old")
+        self.assertEqual(raw, [
+            "INBOX",
+            {"name": "[Gmail]/Sent Mail", "place": "sent"},
+            {"name": "Old", "place": "archive", "label": "Pulled/old"},
+        ])
+        folders = (
+            FolderConfig(name="INBOX"),
+            FolderConfig(name="[Gmail]/Sent Mail", place="sent"),
+            FolderConfig(name="Old", place="archive", label="Pulled/old"),
+        )
+        self.assertEqual(parse_folder_text(format_folder_text(folders)), raw)
+        # Comma-separated plain names still work (pre-0.3.0 UI syntax).
+        self.assertEqual(parse_folder_text("INBOX, Newsletters"), ["INBOX", "Newsletters"])
+        with self.assertRaises(ConfigError):
+            parse_folder_text("INBOX :: outbox")
 
     def test_throttle_block(self):
         os.environ["TEST_GMAILIFICATION_PW"] = "x"

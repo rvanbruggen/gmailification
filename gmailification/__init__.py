@@ -1,3 +1,3 @@
 """gmailification — pull mail from secondary IMAP mailboxes into Gmail via the Gmail API."""
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"

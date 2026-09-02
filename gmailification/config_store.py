@@ -18,7 +18,7 @@ import threading
 
 import yaml
 
-from .config import AppConfig, ConfigError, load_config
+from .config import AppConfig, ConfigError, load_config, parse_folder_text
 
 _FORBIDDEN_NAME_CHARS = set("/\\ \t\n\"'")
 
@@ -144,7 +144,8 @@ class ConfigStore:
     def upsert_source(self, raw: dict, user: str, values: dict) -> None:
         """Create or update a source from UI form values.
 
-        values keys: name, host, port, username, label, folders (comma string),
+        values keys: name, host, port, username, label, folders (text: one
+        folder per line or comma-separated, each "name [:: place [:: label]]"),
         backfill_days, after_import, and exactly one credential input:
         password (plaintext, stored as a secret file) or password_env.
         """
@@ -160,7 +161,7 @@ class ConfigStore:
         if values.get("port", "").strip():
             entry["port"] = int(values["port"])
         if values.get("folders", "").strip():
-            entry["folders"] = [f.strip() for f in values["folders"].split(",") if f.strip()]
+            entry["folders"] = parse_folder_text(values["folders"])
         if values.get("backfill_days", "").strip():
             entry["backfill_days"] = int(values["backfill_days"])
         if values.get("after_import", "").strip():

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from gmailification.config import SourceConfig, ThrottleConfig
+from gmailification.config import FolderConfig, SourceConfig, ThrottleConfig
 from gmailification.state import Database
 from gmailification.sync import sync_source
 
@@ -60,9 +60,11 @@ class FakeImap:
 class FakeDest:
     def __init__(self):
         self.imported = []
+        self.calls = []  # (label, kwargs) per import
 
-    def import_raw(self, raw, label, never_mark_spam=False):
+    def import_raw(self, raw, label, **kwargs):
         self.imported.append(raw)
+        self.calls.append((label, kwargs))
         return f"gmail-{len(self.imported)}"
 
 
@@ -164,6 +166,39 @@ class SyncTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.imported, 1)
 
+    def test_inbox_folder_flags(self):
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", backfill_days=7,
+        )
+        self._run()
+        label, kwargs = self.dest.calls[0]
+        self.assertEqual(label, "Pulled/telenet")
+        self.assertEqual(kwargs, {"inbox": True, "unread": True, "sent": False})
+
+    def test_sent_folder_flags_and_label_override(self):
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", backfill_days=7,
+            folders=(FolderConfig(name="Sent", place="sent", label="Pulled/telenet/sent"),),
+        )
+        result = self._run()
+        self.assertEqual(result.imported, 3)
+        label, kwargs = self.dest.calls[0]
+        self.assertEqual(label, "Pulled/telenet/sent")
+        self.assertEqual(kwargs, {"inbox": False, "unread": False, "sent": True})
+
+    def test_archive_folder_flags(self):
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", backfill_days=7,
+            folders=(FolderConfig(name="Old", place="archive"),),
+        )
+        self._run()
+        label, kwargs = self.dest.calls[0]
+        self.assertEqual(label, "Pulled/telenet")  # no override -> source label
+        self.assertEqual(kwargs, {"inbox": False, "unread": False, "sent": False})
+
     def test_keep_mode_never_deletes(self):
         self._run()
         FakeImap.mailbox[4] = _msg(4)
@@ -198,7 +233,7 @@ class SyncTest(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def import_raw(self, raw, label, never_mark_spam=False):
+            def import_raw(self, raw, label, **kwargs):
                 self.calls += 1
                 if raw == _msg(2):
                     raise ValueError("API says no")

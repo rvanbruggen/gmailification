@@ -146,9 +146,22 @@ class GmailDestination:
 
     # -- delivery ----------------------------------------------------------
 
-    def import_raw(self, raw: bytes, label_path: str, never_mark_spam: bool = False) -> str:
-        """Import a raw RFC822 message; returns the Gmail message id."""
-        ids = self.label_ids(label_path) + ["INBOX", "UNREAD"]
+    def import_raw(self, raw: bytes, label_path: str, *, inbox: bool = True,
+                   unread: bool = True, sent: bool = False,
+                   never_mark_spam: bool = False) -> str:
+        """Import a raw RFC822 message; returns the Gmail message id.
+
+        System labels control placement: INBOX/UNREAD for received mail,
+        SENT to surface a message in Gmail's Sent view, neither for
+        archive-only imports (label + All Mail).
+        """
+        ids = self.label_ids(label_path)
+        if inbox:
+            ids.append("INBOX")
+        if unread:
+            ids.append("UNREAD")
+        if sent:
+            ids.append("SENT")
         svc = self._service()
         media = MediaIoBaseUpload(io.BytesIO(raw), mimetype="message/rfc822", resumable=len(raw) > 4 * 1024 * 1024)
         req = svc.users().messages().import_(

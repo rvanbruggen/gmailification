@@ -10,6 +10,21 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-02
+
+### Added
+- Per-folder placement: each source folder can be a plain name (unchanged
+  behavior) or a mapping with `place: inbox | sent | archive` and an optional
+  per-folder `label` override. `sent` imports into Gmail's Sent view (read,
+  threaded, never in the inbox) via the SENT system label — sync a source's
+  sent folder and conversations in the destination show both sides. `archive`
+  imports label-only (All Mail, read).
+- Web UI folder field accepts the compact syntax, one folder per line:
+  `name [:: place [:: label]]`; plain comma-separated names keep working.
+
+### Changed
+- Duplicate folder names within one source are now rejected at config load.
+
 ## [0.2.2] - 2026-09-02
 
 ### Fixed

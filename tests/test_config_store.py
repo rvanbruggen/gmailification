@@ -91,6 +91,21 @@ class ConfigStoreTest(unittest.TestCase):
         with open(self.path) as fh:
             self.assertNotIn("test-dummy-password", fh.read())
 
+    def test_upsert_source_with_sent_folder_syntax(self):
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {
+            "name": "telenet",
+            "folders": "INBOX\n[Gmail]/Sent Mail :: sent",
+        })
+        cfg = self.store.write_raw(raw)
+        folders = cfg.user("rik").sources[0].folders
+        self.assertEqual([f.name for f in folders], ["INBOX", "[Gmail]/Sent Mail"])
+        self.assertEqual([f.place for f in folders], ["inbox", "sent"])
+        # Plain folders stay plain strings in the YAML; only rich ones become mappings.
+        on_disk = self.store.read_raw()["users"][0]["sources"][0]["folders"]
+        self.assertEqual(on_disk[0], "INBOX")
+        self.assertEqual(on_disk[1], {"name": "[Gmail]/Sent Mail", "place": "sent"})
+
     def test_edit_source_keeps_password_when_blank(self):
         raw = self.store.read_raw()
         self.store.upsert_source(raw, "rik", {

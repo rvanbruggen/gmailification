@@ -35,7 +35,13 @@ users:
         username: alice@old-company.example
         password_env: GMAILIFICATION_SRC_ALICE_OLD_COMPANY
         label: Pulled/old-company
-        # folders: [INBOX]            # default
+        # folders: [INBOX]            # default; each entry is a name or a mapping:
+        # folders:
+        #   - INBOX
+        #   - name: "[Gmail]/Sent Mail"
+        #     place: sent             # lands in Gmail's Sent view: read, threaded,
+        #                             # never in the inbox (place: inbox | sent | archive)
+        #     # label: Pulled/old-company/sent   # optional per-folder label override
         # backfill_days: 7            # import the last N days on first run (default 0)
         # after_import: keep          # keep (default) = copy, source untouched;
         #                             # delete = move, expunge from the source

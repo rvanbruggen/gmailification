@@ -182,6 +182,14 @@ config and secrets mounted from the host, nothing else to deploy.
 
 - Mail from every source simply arrives in Gmail, labeled `Pulled/<source>`,
   threaded and searchable, on the default 3-minute cycle.
+- Want the source's **sent mail** in Gmail too? Add its sent folder to the
+  source with placement `sent` — in the UI folder field, one folder per line:
+  `[Gmail]/Sent Mail :: sent`. Those messages appear in Gmail's own *Sent*
+  view, already read, threaded into their conversations, never in the inbox —
+  so a conversation shows both sides across all your addresses. A third
+  placement, `:: archive`, imports label-only (All Mail, read). Folder names
+  vary per server ("[Gmail]/Sent Mail", "Sent", "INBOX.Sent", …) — check the
+  source's IMAP folder list.
 - Expecting a 2FA code or an urgent mail? Hit **Poll now** on the dashboard
   (or `POST /poll`).
 - If a source breaks (password changed, server down), its owner gets an

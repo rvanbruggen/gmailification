@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import __version__
-from .config import AppConfig, ConfigError, load_config
+from .config import AppConfig, ConfigError, format_folder_text, load_config
 from .config_store import ConfigStore
 from .gmail_dest import GmailDestination, token_info
 from .state import Database
@@ -121,7 +121,9 @@ td, th { text-align: left; padding: .3rem .6rem .3rem 0; vertical-align: top;
          border-bottom: 1px solid rgba(128,128,128,.2); }
 form.inline { display: inline; }
 label { display: block; margin-top: .6rem; font-size: .9rem; }
-input, select { padding: .3rem .4rem; margin-top: .15rem; min-width: 16rem; }
+input, select, textarea { padding: .3rem .4rem; margin-top: .15rem; min-width: 16rem;
+                          font: inherit; }
+textarea { display: block; }
 button { padding: .35rem .9rem; margin-top: .8rem; cursor: pointer; }
 button.danger { color: #dc2626; }
 .banner { background: rgba(217,119,6,.12); border: 1px solid #d97706;
@@ -497,7 +499,9 @@ do not survive a UI edit.</p>""")
     accounts use an app password</span></label>
   <label>&hellip;or environment variable name <input name='password_env'></label>
   <label>Gmail label <input name='label' placeholder='Pulled/&lt;name&gt; (default)'></label>
-  <label>Folders (comma-separated) <input name='folders' value='INBOX'></label>
+  <label>Folders (one per line; append <code>:: sent</code> for the sent folder,
+    <code>:: archive</code> for label-only)
+    <textarea name='folders' rows='3'>INBOX</textarea></label>
   <label>Backfill days on first run <input name='backfill_days' type='number' value='0'></label>
   <label>After import <select name='after_import'>
     <option value='keep'>keep (copy — source untouched)</option>
@@ -540,7 +544,9 @@ do not survive a UI edit.</p>""")
          placeholder='leave empty to keep current'></label>
   <label>&hellip;or environment variable name <input name='password_env'></label>
   <label>Gmail label <input name='label' value='{_esc(s.label)}'></label>
-  <label>Folders (comma-separated) <input name='folders' value='{_esc(", ".join(s.folders))}'></label>
+  <label>Folders (one per line; append <code>:: sent</code> for the sent folder,
+    <code>:: archive</code> for label-only)
+    <textarea name='folders' rows='3'>{_esc(format_folder_text(s.folders))}</textarea></label>
   <label>Backfill days on first run <input name='backfill_days' type='number' value='{s.backfill_days}'></label>
   <label>After import <select name='after_import'>
     <option value='keep' {'selected' if s.after_import == 'keep' else ''}>keep (copy — source untouched)</option>
