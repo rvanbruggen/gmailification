@@ -10,6 +10,15 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-02
+
+### Fixed
+- Timestamps in the web UI and alert emails were rendered in the container's
+  local time (UTC in Docker). All displayed times now use a configurable
+  `timezone` (IANA name, default `Europe/Brussels` — CET/CEST) and always
+  include the zone abbreviation, e.g. "Wed 03 Sep 14:02 CEST". Editable in
+  the Settings page; invalid zone names are rejected at config load.
+
 ## [0.6.1] - 2026-09-02
 
 ### Added

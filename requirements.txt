@@ -3,3 +3,4 @@ google-auth>=2.30
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 PyYAML>=6.0
+tzdata>=2024.1

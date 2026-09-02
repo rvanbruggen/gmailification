@@ -124,6 +124,8 @@ class AppConfig:
     admin_user: str = ""
     admin_copy_alerts: bool = True
     history_days: float = 14.0
+    # IANA zone used for every timestamp shown in the UI and in alert emails.
+    timezone: str = "Europe/Brussels"
 
     def user(self, name: str) -> UserConfig:
         for u in self.users:
@@ -163,6 +165,16 @@ def _resolve_password(user: str, name: str, raw: dict) -> str:
             raise ConfigError(f"source {user}/{name}: password_file {pw_file} is empty")
         return value
     return str(literal)
+
+
+def _check_timezone(name: str, context: str) -> str:
+    from zoneinfo import ZoneInfo
+    try:
+        ZoneInfo(name)
+    except Exception as exc:
+        raise ConfigError(f"{context}: unknown timezone {name!r} "
+                          f"(use an IANA name like Europe/Brussels): {exc}") from exc
+    return name
 
 
 def _require(raw: dict, key: str, context: str):
@@ -366,4 +378,5 @@ def load_config(path: str) -> AppConfig:
         admin_user=admin_user,
         admin_copy_alerts=bool(admin_raw.get("copy_alerts", True)),
         history_days=float(raw.get("history_days", 14)),
+        timezone=_check_timezone(str(raw.get("timezone", "Europe/Brussels")), path),
     )

@@ -35,6 +35,7 @@ from .config import AppConfig, ConfigError, format_folder_text, load_config
 from .config_store import ConfigStore
 from .gmail_dest import GmailDestination, token_info
 from .state import Database
+from .util import fmt_local
 
 log = logging.getLogger("gmailification.web")
 
@@ -206,7 +207,7 @@ def _page(title: str, body: str) -> bytes:
     ).encode("utf-8")
 
 
-def _strip_svg(records, start: float, end: float, buckets: int,
+def _strip_svg(records, start: float, end: float, buckets: int, tzname: str,
                width: int = 480, height: int = 26) -> str:
     """Poll-history timeline: one tick per time bucket.
 
@@ -227,7 +228,7 @@ def _strip_svg(records, start: float, end: float, buckets: int,
     bar_w = width / buckets
     rects = []
     for i, (polls, fails, moved) in enumerate(agg):
-        when = time.strftime("%d %b %H:%M", time.localtime(start + i * span))
+        when = fmt_local(start + i * span, tzname, "%d %b %H:%M %Z")
         if polls == 0:
             h, cls, tip = 6, "nodata", f"{when}: no polls"
         elif fails:
@@ -251,8 +252,8 @@ _STRIP_LEGEND = ("<p class='legend'>each tick is a time slice &mdash; "
                  "short faint green = ok, quiet &middot; grey = no data</p>")
 
 
-def _fmt_ts(ts: float) -> str:
-    return time.strftime("%a %d %b %H:%M", time.localtime(ts))
+def _fmt_ts(ts: float, tzname: str) -> str:
+    return fmt_local(ts, tzname, "%a %d %b %H:%M %Z")
 
 
 def _make_handler(app: AppState, db: Database):
@@ -530,7 +531,7 @@ def _make_handler(app: AppState, db: Database):
                 body.append(_DISABLED_NOTICE)
             last = app.shared.last_cycle_at
             body.append(f"<p class='muted'>Last cycle: "
-                        f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last)) if last else 'not yet'}"
+                        f"{fmt_local(last, cfg.timezone, '%Y-%m-%d %H:%M:%S %Z') if last else 'not yet'}"
                         f" &middot; polling every {cfg.poll_interval_seconds}s</p>")
             if self._editable:
                 body.append("<form class='inline' method='post' action='/poll'>"
@@ -549,7 +550,8 @@ def _make_handler(app: AppState, db: Database):
                         health = (f"<span class='pill p-bad' title='{_esc(st.last_error or '')}'>"
                                   f"failing &times;{st.consecutive_failures}</span>")
                     mode = "move" if s.after_import == "delete" else "copy"
-                    strip = _strip_svg(by_source.get(s.key, []), day_ago, now, buckets=48)
+                    strip = _strip_svg(by_source.get(s.key, []), day_ago, now,
+                                       buckets=48, tzname=cfg.timezone)
                     rows.append(
                         f"<tr><td><a href='/users/{_esc(u.name)}/sources/{_esc(s.name)}'>"
                         f"{_esc(s.name)}</a></td><td class='muted'>{_esc(s.username)}</td>"
@@ -582,7 +584,7 @@ def _make_handler(app: AppState, db: Database):
                         if e.deleted:
                             bits.append(f"{e.deleted} moved")
                         what = f"<span class='pill p-ok'>{_esc(', '.join(bits))}</span>"
-                    ev_rows.append(f"<tr><td class='muted'>{_esc(_fmt_ts(e.ts))}</td>"
+                    ev_rows.append(f"<tr><td class='muted'>{_esc(_fmt_ts(e.ts, cfg.timezone))}</td>"
                                    f"<td>{_esc(e.source_key)}</td><td>{what}</td></tr>")
                 body.append("<h2>Recent activity</h2><div class='card'><table>"
                             "<tr><th>when</th><th>source</th><th>event</th></tr>"
@@ -615,6 +617,8 @@ def _make_handler(app: AppState, db: Database):
     <input name='alert_after_hours' type='number' step='0.5' value='{cfg.alert_after_hours}'></label>
   <label>Re-alert every (hours)
     <input name='realert_after_hours' type='number' step='0.5' value='{cfg.realert_after_hours}'></label>
+  <label>Timezone for displayed times <span class='muted'>(IANA name)</span>
+    <input name='timezone' value='{_esc(cfg.timezone)}' placeholder='Europe/Brussels'></label>
   <h2>Throttling <span class='muted'>(defaults — override per source on its page)</span></h2>
   <label>Bandwidth limit (KB/s, 0 = unlimited)
     <input name='bandwidth_limit_kbps' type='number' value='{t.bandwidth_limit_kbps}'></label>
@@ -698,13 +702,15 @@ do not survive a UI edit.</p>""")
                 return
             now = time.time()
             key = f"{user}/{sname}"
-            day = _strip_svg(db.history_since(now - 24 * 3600, key), now - 24 * 3600, now, buckets=96)
+            day = _strip_svg(db.history_since(now - 24 * 3600, key), now - 24 * 3600, now,
+                             buckets=96, tzname=cfg.timezone)
             span_days = max(1, int(cfg.history_days))
             long_start = now - span_days * 86400
-            longer = _strip_svg(db.history_since(long_start, key), long_start, now, buckets=84)
+            longer = _strip_svg(db.history_since(long_start, key), long_start, now,
+                                buckets=84, tzname=cfg.timezone)
             events = db.recent_events(limit=30, source_key=key)
             ev_rows = "".join(
-                f"<tr><td class='muted'>{_esc(_fmt_ts(e.ts))}</td>"
+                f"<tr><td class='muted'>{_esc(_fmt_ts(e.ts, cfg.timezone))}</td>"
                 + ("<td><span class='pill p-bad'>failed</span></td>"
                    f"<td class='muted'>{_esc((e.error or '')[:140])}</td>" if not e.ok else
                    f"<td><span class='pill p-ok'>ok</span></td>"

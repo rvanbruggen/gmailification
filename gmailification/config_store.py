@@ -113,6 +113,8 @@ class ConfigStore:
                 throttle[key] = int(values[key])
         if values.get("message_pause_seconds", "") != "":
             throttle["message_pause_seconds"] = float(values["message_pause_seconds"])
+        if values.get("timezone", "").strip():
+            raw["timezone"] = values["timezone"].strip()
         if values.get("admin_user", "") != "":
             raw.setdefault("admin", {})["user"] = str(values["admin_user"])
         if "admin_copy_alerts" in values:

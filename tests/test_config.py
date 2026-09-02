@@ -135,6 +135,15 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             parse_folder_text("INBOX :: outbox")
 
+    def test_timezone_default_and_validation(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL)
+        self.assertEqual(cfg.timezone, "Europe/Brussels")
+        cfg = self._load(MINIMAL + "\ntimezone: UTC\n")
+        self.assertEqual(cfg.timezone, "UTC")
+        with self.assertRaises(ConfigError):
+            self._load(MINIMAL + "\ntimezone: Mars/OlympusMons\n")
+
     def test_throttle_block(self):
         os.environ["TEST_GMAILIFICATION_PW"] = "x"
         cfg = self._load(MINIMAL + "\nthrottle:\n  bandwidth_limit_kbps: 512\n  max_messages_per_cycle: 10\n")

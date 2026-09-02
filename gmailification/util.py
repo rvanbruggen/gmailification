@@ -9,6 +9,17 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+def fmt_local(ts: float, tzname: str, fmt: str = "%a %d %b %H:%M %Z") -> str:
+    """Render a unix timestamp in the configured display timezone, with the
+    zone abbreviation included so the zone is always explicit."""
+    try:
+        return datetime.fromtimestamp(ts, ZoneInfo(tzname)).strftime(fmt)
+    except Exception:
+        return datetime.fromtimestamp(ts).strftime(fmt) + " ?"
 
 
 def dedupe_key(raw: bytes) -> str:

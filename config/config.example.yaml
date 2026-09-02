@@ -15,6 +15,7 @@ db_path: /data/gmailification.db
 heartbeat_file: /data/heartbeat
 secrets_dir: /data/secrets      # passwords entered in the web UI land here (0600)
 history_days: 14                # how long to keep per-poll history for the UI charts
+timezone: Europe/Brussels       # IANA zone for all displayed timestamps (UI + alerts)
 
 # Be a polite citizen on a shared broadband line. These are the global
 # defaults; any source can override any subset with its own throttle: block

@@ -8,7 +8,7 @@ from gmailification.imap_source import (
     parse_search_uids,
     parse_status,
 )
-from gmailification.util import dedupe_key
+from gmailification.util import dedupe_key, fmt_local
 
 
 class ImapParseTest(unittest.TestCase):
@@ -73,6 +73,16 @@ class SpecialUseTest(unittest.TestCase):
     def test_find_special_use_case_insensitive_attr(self):
         lines = [b'(\\sent) "/" "Sent Items"']
         self.assertEqual(find_special_use(lines, "sent"), "Sent Items")
+
+
+class FmtLocalTest(unittest.TestCase):
+    def test_explicit_zone_and_dst(self):
+        # 2026-01-15 12:00 UTC -> 13:00 CET; 2026-07-15 12:00 UTC -> 14:00 CEST
+        winter = 1768478400.0  # 2026-01-15T12:00:00Z
+        summer = 1784116800.0  # 2026-07-15T12:00:00Z
+        self.assertEqual(fmt_local(winter, "Europe/Brussels", "%H:%M %Z"), "13:00 CET")
+        self.assertEqual(fmt_local(summer, "Europe/Brussels", "%H:%M %Z"), "14:00 CEST")
+        self.assertEqual(fmt_local(winter, "UTC", "%H:%M %Z"), "12:00 UTC")
 
 
 class DedupeKeyTest(unittest.TestCase):

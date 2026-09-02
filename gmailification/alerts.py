@@ -16,6 +16,7 @@ from . import __version__
 from .config import AppConfig
 from .gmail_dest import GmailDestination
 from .state import Database, SourceStatus
+from .util import fmt_local
 
 log = logging.getLogger("gmailification.alerts")
 
@@ -28,7 +29,7 @@ def _format_alert(cfg: AppConfig, st: SourceStatus, now: float) -> tuple[str, st
     lines = [
         f"gmailification has been unable to sync {what}.",
         "",
-        f"Failing since: {time.strftime('%Y-%m-%d %H:%M %Z', time.localtime(st.failing_since))}",
+        f"Failing since: {fmt_local(st.failing_since, cfg.timezone, '%Y-%m-%d %H:%M %Z')}",
         f"Consecutive failures: {st.consecutive_failures}",
         f"Last error: {st.last_error or 'unknown'}",
         "",
