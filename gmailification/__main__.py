@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sqlite3
 import sys
 import time
 
@@ -60,8 +61,18 @@ def main(argv: list[str] | None = None) -> int:
         log.error("configuration error: %s", exc)
         return 2
 
-    os.makedirs(os.path.dirname(app.cfg.db_path) or ".", exist_ok=True)
-    db = Database(app.cfg.db_path)
+    try:
+        os.makedirs(os.path.dirname(app.cfg.db_path) or ".", exist_ok=True)
+        db = Database(app.cfg.db_path)
+    except (sqlite3.OperationalError, OSError) as exc:
+        log.error(
+            "cannot open state database %s: %s — the directory is probably not "
+            "writable by this user (uid %d). In Docker this means the /data "
+            "volume predates image v0.2.2 and is owned by root: recreate it "
+            "with 'docker compose down -v && docker compose up -d --build' "
+            "(safe before first successful run; afterwards chown it instead).",
+            app.cfg.db_path, exc, os.getuid())
+        return 2
     startup_token_check(app)
 
     server = None

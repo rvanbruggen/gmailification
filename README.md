@@ -237,6 +237,23 @@ Alerts arrive in the affected user's own inbox under the `Pulled/alerts`
 label after a source has been failing for `alert_after_hours` (default 6),
 repeating every `realert_after_hours` (default 24) until recovery.
 
+## Troubleshooting
+
+- **`sqlite3.OperationalError: unable to open database file` on startup** —
+  the `/data` volume is owned by root (created by an image older than
+  v0.2.2). Before the first successful run it holds nothing, so simply
+  recreate it: `docker compose down -v && docker compose up -d --build`.
+  Later, preserve state with
+  `docker compose run --rm --user root gmailification chown -R 1000:1000 /data`
+  (overriding the entrypoint as needed) or chown the volume from the host.
+- **`WARN The "..." variable is not set` from docker compose** — a value in
+  `.env` contains a literal `$`. Compose treats `$name` as interpolation and
+  replaces it with an empty string, silently corrupting that password. Escape
+  every literal dollar sign as `$$` (e.g. `pa$$word` for `pa$word`).
+- **A Google-account source fails to log in** despite the right app
+  password — app passwords are 16 letters *without spaces*; remove the
+  spaces Google displays them with.
+
 ## Design decisions
 
 - **Build, not fork.** [turbogmailify](https://github.com/YoRyan/turbogmailify)

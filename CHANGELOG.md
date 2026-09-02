@@ -10,6 +10,20 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-02
+
+### Fixed
+- Docker: `/data` is now created and chowned to the service user in the
+  image, so the named volume is writable on first use (previously the
+  container crash-looped with `sqlite3.OperationalError: unable to open
+  database file`).
+- Startup now prints an actionable error instead of a traceback when the
+  state database cannot be opened.
+
+### Added
+- Troubleshooting section in the README (volume ownership, literal `$` in
+  `.env` values, app-password formatting).
+
 ## [0.2.1] - 2026-09-01
 
 ### Changed

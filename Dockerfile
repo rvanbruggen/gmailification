@@ -5,6 +5,10 @@ FROM python:3.12-slim
 
 RUN groupadd -g 1000 gmailification && useradd -m -u 1000 -g 1000 gmailification
 
+# Prepare /data with the right ownership so the named volume inherits it on
+# first use — the service runs as uid 1000 and must be able to write there.
+RUN mkdir -p /data && chown gmailification:gmailification /data
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
