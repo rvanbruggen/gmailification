@@ -174,7 +174,7 @@ td.stripcell{min-width:11rem;width:34%}
 footer{max-width:64rem;margin:0 auto;padding:0 1rem 2rem;color:var(--ink2);font-size:.78rem}
 """
 
-_LOGO = """<svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+_LOGO = """<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
 <defs><linearGradient id="glg" x1="0" y1="0" x2="1" y2="1">
 <stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#0ea5e9"/>
 </linearGradient></defs>
@@ -191,7 +191,9 @@ def _page(title: str, body: str) -> bytes:
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{_esc(title)}</title><style>{_STYLE}</style></head><body>"
+        f"<title>{_esc(title)}</title>"
+        "<link rel='icon' type='image/svg+xml' href='/favicon.svg'>"
+        f"<style>{_STYLE}</style></head><body>"
         "<header><div class='hwrap'>"
         f"<a class='brand' href='/'>{_LOGO}<span>gmailification</span></a>"
         "<nav><a href='/'>Dashboard</a><a href='/config'>Settings</a>"
@@ -340,6 +342,15 @@ def _make_handler(app: AppState, db: Database):
 
         def do_GET(self):
             path = urlparse(self.path).path
+            if path in ("/favicon.svg", "/favicon.ico"):
+                body = _LOGO.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/healthz":
                 ok = app.shared.healthy()
                 self._send_json(200 if ok else 503, {

@@ -10,6 +10,12 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-02
+
+### Added
+- The web UI now serves the gmailification logo as its favicon
+  (`/favicon.svg`, SVG, unauthenticated, cached for a day).
+
 ## [0.4.0] - 2026-09-02
 
 ### Added

@@ -112,6 +112,12 @@ class WebTest(unittest.TestCase):
         cfg, _ = self.app.snapshot()
         self.assertNotIn("trol", [s.name for s in cfg.user("rik").sources])
 
+    def test_favicon_served_without_auth(self):
+        resp = self._request("/favicon.svg", auth=False)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers["Content-Type"], "image/svg+xml")
+        self.assertIn(b"<svg", resp.read())
+
     def test_history_endpoint(self):
         self.db.record_poll("rik/histtest", "rik", ok=True, imported=2)
         with self.assertRaises(urllib.error.HTTPError) as ctx:
