@@ -60,7 +60,10 @@ def _sync_folder(
     fcfg: FolderConfig, throttle: ThrottleConfig, budget: int | None
 ) -> tuple[int, int, int, int, int]:
     """Returns (imported, dupes, oversize, processed, deleted)."""
-    folder = fcfg.name
+    # "auto:<use>" placeholders resolve to the server's real folder; state is
+    # keyed by the resolved name, so switching a config between the literal
+    # name and its auto: form keeps the same cursor.
+    folder = imap.resolve(fcfg.name)
     label = fcfg.label or source.label
     is_inbox = fcfg.place == "inbox"
     imported = dupes = oversize = processed = 0

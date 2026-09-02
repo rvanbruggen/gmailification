@@ -18,6 +18,12 @@ class ConfigError(Exception):
     pass
 
 
+# Folder names may be literal, or "auto:<use>" placeholders resolved at poll
+# time via the server's IMAP SPECIAL-USE attributes (RFC 6154) — language-
+# independent, so "auto:sent" finds "[Gmail]/Sent Mail" and "[Gmail]/Verzonden
+# berichten" alike.
+AUTO_FOLDER_USES = ("sent", "archive", "junk", "trash", "drafts", "all")
+
 # Where an imported message lands in the destination Gmail:
 #   inbox   -> INBOX + UNREAD (normal received mail; the default)
 #   sent    -> Gmail's Sent view, already read, threaded, never in the inbox
@@ -171,6 +177,12 @@ def _parse_folder(context: str, raw) -> FolderConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"{context}: each folder must be a name or a mapping")
     name = str(_require(raw, "name", f"{context} folder")).strip()
+    if name.lower().startswith("auto:"):
+        use = name.lower().split(":", 1)[1]
+        if use not in AUTO_FOLDER_USES:
+            raise ConfigError(f"{context}: unknown auto folder {name!r} — valid: "
+                              + ", ".join(f"auto:{u}" for u in AUTO_FOLDER_USES))
+        name = f"auto:{use}"
     place = str(raw.get("place", "inbox")).strip().lower()
     if place not in VALID_PLACES:
         raise ConfigError(f"{context} folder {name!r}: place must be one of "

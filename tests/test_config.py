@@ -95,6 +95,19 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(folders[1], FolderConfig(name="[Gmail]/Sent Mail", place="sent"))
         self.assertEqual(folders[2], FolderConfig(name="Old", place="archive", label="Pulled/old"))
 
+    def test_auto_folder_names(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL + """
+        folders:
+          - INBOX
+          - name: "AUTO:Sent"
+            place: sent
+""")
+        folders = cfg.users[0].sources[0].folders
+        self.assertEqual(folders[1].name, "auto:sent")  # normalized
+        with self.assertRaises(ConfigError):
+            self._load(MINIMAL + "\n        folders: [\"auto:outbox\"]\n")
+
     def test_invalid_folder_place_rejected(self):
         os.environ["TEST_GMAILIFICATION_PW"] = "x"
         with self.assertRaises(ConfigError):

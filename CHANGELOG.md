@@ -10,6 +10,17 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-02
+
+### Added
+- `auto:<use>` folder placeholders (`auto:sent`, `auto:archive`, `auto:junk`,
+  `auto:trash`, `auto:drafts`, `auto:all`): resolved at poll time via the
+  server's IMAP SPECIAL-USE attributes (RFC 6154), so sent-folder sync no
+  longer depends on the account's language or the server's naming convention.
+  Sync state is keyed by the resolved name, so switching a config between a
+  literal name and its `auto:` form keeps the same cursor. Servers without
+  SPECIAL-USE get a clear error advising the literal name.
+
 ## [0.6.0] - 2026-09-02
 
 ### Added

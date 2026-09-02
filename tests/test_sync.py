@@ -29,6 +29,9 @@ class FakeImap:
     def __exit__(self, *a):
         pass
 
+    def resolve(self, name):
+        return FakeImap.resolutions.get(name, name)
+
     def status(self, folder):
         uidnext = max(self.mailbox, default=0) + 1
         return self.uidvalidity, uidnext
@@ -82,6 +85,7 @@ class SyncTest(unittest.TestCase):
         FakeImap.uidvalidity = 100
         FakeImap.flagged = []
         FakeImap.expunged = []
+        FakeImap.resolutions = {}
 
     def tearDown(self):
         for suffix in ("", "-wal", "-shm"):
@@ -210,6 +214,21 @@ class SyncTest(unittest.TestCase):
         label, kwargs = self.dest.calls[0]
         self.assertEqual(label, "Pulled/telenet/sent")
         self.assertEqual(kwargs, {"inbox": False, "unread": False, "sent": True})
+
+    def test_auto_folder_resolves_and_keys_state_by_real_name(self):
+        FakeImap.resolutions = {"auto:sent": "[Gmail]/Verzonden berichten"}
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", backfill_days=7,
+            folders=(FolderConfig(name="auto:sent", place="sent"),),
+        )
+        result = self._run()
+        self.assertEqual(result.imported, 3)
+        # State cursor lives under the resolved name, so a later switch
+        # between literal and auto: forms keeps the same cursor.
+        st = self.db.get_folder_state("rik/telenet", "[Gmail]/Verzonden berichten")
+        self.assertIsNotNone(st)
+        self.assertIsNone(self.db.get_folder_state("rik/telenet", "auto:sent"))
 
     def test_archive_folder_flags(self):
         self.source = SourceConfig(

@@ -28,6 +28,48 @@ _STATUS_RE = {
 # Messages larger than this are skipped (Gmail API import limit is 50 MB).
 MAX_MESSAGE_BYTES = 45 * 1024 * 1024
 
+# RFC 6154 special-use attributes for the "auto:<use>" folder placeholders.
+SPECIAL_USE_ATTRS = {
+    "sent": b"\\Sent",
+    "archive": b"\\Archive",
+    "junk": b"\\Junk",
+    "trash": b"\\Trash",
+    "drafts": b"\\Drafts",
+    "all": b"\\All",
+}
+
+_LIST_RE = re.compile(rb'^\((?P<attrs>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
+
+
+def parse_list_line(line: bytes) -> tuple[bytes, str] | None:
+    """Parse one IMAP LIST response line into (attributes, folder name).
+
+    The name stays in its wire form (modified UTF-7 stays encoded) so it can
+    be sent straight back to the server in STATUS/SELECT.
+    """
+    m = _LIST_RE.match(line.strip())
+    if not m:
+        return None
+    name = m.group("name").strip()
+    if name.startswith(b'"') and name.endswith(b'"') and len(name) >= 2:
+        name = name[1:-1].replace(b'\\"', b'"').replace(b"\\\\", b"\\")
+    return m.group("attrs"), name.decode("ascii", "replace")
+
+
+def find_special_use(list_lines: list, use: str) -> str | None:
+    """Find the folder carrying the special-use attribute for `use`."""
+    attr = SPECIAL_USE_ATTRS[use].lower()
+    for line in list_lines:
+        if not isinstance(line, (bytes, bytearray)):
+            continue
+        parsed = parse_list_line(bytes(line))
+        if parsed is None:
+            continue
+        attrs, name = parsed
+        if attr in (t.lower() for t in attrs.split()):
+            return name
+    return None
+
 
 class ImapError(Exception):
     pass
@@ -68,6 +110,7 @@ class ImapSource:
         self._cfg = cfg
         self._timeout = timeout
         self._client: imaplib.IMAP4_SSL | None = None
+        self._resolved: dict[str, str] = {}
 
     def __enter__(self) -> "ImapSource":
         try:
@@ -95,6 +138,43 @@ class ImapSource:
         if typ != "OK":
             raise ImapError(f"{what} failed for {self._cfg.key}: {typ} {data!r}")
         return data
+
+    def resolve(self, name: str) -> str:
+        """Resolve an "auto:<use>" placeholder to the server's actual folder
+        via its SPECIAL-USE attributes; literal names pass through unchanged.
+        Cached per connection."""
+        if not name.lower().startswith("auto:"):
+            return name
+        key = name.lower()
+        cached = self._resolved.get(key)
+        if cached is not None:
+            return cached
+        use = key.split(":", 1)[1]
+        if use not in SPECIAL_USE_ATTRS:
+            raise ImapError(f"{self._cfg.key}: unknown auto folder {name!r}")
+        try:
+            typ, data = self._client.list()
+        except (OSError, socket.timeout, imaplib.IMAP4.abort) as exc:
+            raise TransientError(f"IMAP LIST: {exc}") from exc
+        data = self._check(typ, data, "LIST")
+        found = find_special_use(data, use)
+        if found is None:
+            advertised = []
+            for line in data:
+                if isinstance(line, (bytes, bytearray)):
+                    parsed = parse_list_line(bytes(line))
+                    if parsed and any(t.lower() in
+                                      {a.lower() for a in SPECIAL_USE_ATTRS.values()}
+                                      for t in parsed[0].split()):
+                        advertised.append(parsed[1])
+            raise ImapError(
+                f"{self._cfg.key}: cannot resolve {name!r} — no folder advertises "
+                f"{SPECIAL_USE_ATTRS[use].decode()}. "
+                + (f"Folders with special-use attributes: {', '.join(advertised)}. "
+                   if advertised else "This server may not support SPECIAL-USE. ")
+                + "Use the literal folder name instead.")
+        self._resolved[key] = found
+        return found
 
     def status(self, folder: str) -> tuple[int, int]:
         """Return (uidvalidity, uidnext) for a folder without selecting it."""

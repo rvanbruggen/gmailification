@@ -3,6 +3,8 @@ import unittest
 from gmailification.imap_source import (
     ImapError,
     extract_raw_from_fetch,
+    find_special_use,
+    parse_list_line,
     parse_search_uids,
     parse_status,
 )
@@ -35,6 +37,42 @@ class ImapParseTest(unittest.TestCase):
         self.assertEqual(parse_status(line), (1234, 5678))
         with self.assertRaises(ImapError):
             parse_status(b'"INBOX" (MESSAGES 3)')
+
+
+class SpecialUseTest(unittest.TestCase):
+    GMAIL_LIST = [
+        b'(\\HasNoChildren) "/" "INBOX"',
+        b'(\\HasChildren \\Noselect) "/" "[Gmail]"',
+        b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Verzonden berichten"',
+        b'(\\HasNoChildren \\Trash) "/" "[Gmail]/Prullenbak"',
+        b'(\\Drafts \\HasNoChildren) "/" "[Gmail]/Concepten"',
+    ]
+
+    def test_parse_list_line_quoted_with_spaces(self):
+        attrs, name = parse_list_line(b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Sent Mail"')
+        self.assertIn(b"\\Sent", attrs)
+        self.assertEqual(name, "[Gmail]/Sent Mail")
+
+    def test_parse_list_line_unquoted(self):
+        attrs, name = parse_list_line(b'(\\HasNoChildren) "." INBOX.Sent')
+        self.assertEqual(name, "INBOX.Sent")
+
+    def test_parse_list_line_escaped_quote(self):
+        _, name = parse_list_line(b'() "/" "odd\\"name"')
+        self.assertEqual(name, 'odd"name')
+
+    def test_find_special_use_localized_gmail(self):
+        self.assertEqual(find_special_use(self.GMAIL_LIST, "sent"),
+                         "[Gmail]/Verzonden berichten")
+        self.assertEqual(find_special_use(self.GMAIL_LIST, "trash"),
+                         "[Gmail]/Prullenbak")
+        self.assertEqual(find_special_use(self.GMAIL_LIST, "drafts"),
+                         "[Gmail]/Concepten")
+        self.assertIsNone(find_special_use(self.GMAIL_LIST, "archive"))
+
+    def test_find_special_use_case_insensitive_attr(self):
+        lines = [b'(\\sent) "/" "Sent Items"']
+        self.assertEqual(find_special_use(lines, "sent"), "Sent Items")
 
 
 class DedupeKeyTest(unittest.TestCase):

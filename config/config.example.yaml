@@ -42,7 +42,9 @@ users:
         # folders: [INBOX]            # default; each entry is a name or a mapping:
         # folders:
         #   - INBOX
-        #   - name: "[Gmail]/Sent Mail"
+        #   - name: "auto:sent"       # resolves the server's real sent folder via
+        #                             # IMAP special-use attrs, any language; a
+        #                             # literal name like "[Gmail]/Sent Mail" works too
         #     place: sent             # lands in Gmail's Sent view: read, threaded,
         #                             # never in the inbox (place: inbox | sent | archive)
         #     # label: Pulled/old-company/sent   # optional per-folder label override

@@ -661,7 +661,7 @@ do not survive a UI edit.</p>""")
     accounts use an app password</span></label>
   <label>&hellip;or environment variable name <input name='password_env'></label>
   <label>Gmail label <input name='label' placeholder='Pulled/&lt;name&gt; (default)'></label>
-  <label>Folders (one per line; append <code>:: sent</code> for the sent folder,
+  <label>Folders (one per line; append <code>:: sent</code> for the sent folder (<code>auto:sent</code> finds it by its IMAP special-use attribute, any language),
     <code>:: archive</code> for label-only)
     <textarea name='folders' rows='3'>INBOX</textarea></label>
   <label>Backfill days on first run <input name='backfill_days' type='number' value='0'></label>
@@ -743,7 +743,7 @@ do not survive a UI edit.</p>""")
          placeholder='leave empty to keep current'></label>
   <label>&hellip;or environment variable name <input name='password_env'></label>
   <label>Gmail label <input name='label' value='{_esc(s.label)}'></label>
-  <label>Folders (one per line; append <code>:: sent</code> for the sent folder,
+  <label>Folders (one per line; append <code>:: sent</code> for the sent folder (<code>auto:sent</code> finds it by its IMAP special-use attribute, any language),
     <code>:: archive</code> for label-only)
     <textarea name='folders' rows='3'>{_esc(format_folder_text(s.folders))}</textarea></label>
   <label>Backfill days on first run <input name='backfill_days' type='number' value='{s.backfill_days}'></label>
