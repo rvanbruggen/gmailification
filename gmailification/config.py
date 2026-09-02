@@ -68,6 +68,9 @@ class SourceConfig:
     # source's overrides); throttle_overrides names the overridden fields.
     throttle: ThrottleConfig = ThrottleConfig()
     throttle_overrides: tuple[str, ...] = ()
+    # Effective poll interval (the global one unless this source overrides it).
+    poll_interval_seconds: int = 180
+    poll_interval_overridden: bool = False
     # On the very first run for a folder, how many days of existing mail to
     # backfill. 0 (default) = only mail that arrives after gmailification starts.
     backfill_days: int = 0
@@ -239,7 +242,8 @@ def _merge_throttle(base: ThrottleConfig, raw_t, context: str) -> tuple[Throttle
     return merged, tuple(k for k in _THROTTLE_FIELDS if k in raw_t)
 
 
-def _parse_source(user: str, raw: dict, default_throttle: ThrottleConfig) -> SourceConfig:
+def _parse_source(user: str, raw: dict, default_throttle: ThrottleConfig,
+                  default_poll_interval: int) -> SourceConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"user {user}: each source must be a mapping")
     name = str(_require(raw, "name", f"user {user} source"))
@@ -257,6 +261,17 @@ def _parse_source(user: str, raw: dict, default_throttle: ThrottleConfig) -> Sou
     if after_import not in ("keep", "delete"):
         raise ConfigError(f"{context}: after_import must be 'keep' or 'delete', got {after_import!r}")
     throttle, overrides = _merge_throttle(default_throttle, raw.get("throttle"), context)
+    interval_raw = raw.get("poll_interval_seconds")
+    if interval_raw is None:
+        poll_interval, interval_overridden = default_poll_interval, False
+    else:
+        try:
+            poll_interval = int(interval_raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{context}: invalid poll_interval_seconds: {interval_raw!r}") from exc
+        if poll_interval < 10:
+            raise ConfigError(f"{context}: poll_interval_seconds must be at least 10")
+        interval_overridden = True
     return SourceConfig(
         user=user,
         name=name,
@@ -270,10 +285,12 @@ def _parse_source(user: str, raw: dict, default_throttle: ThrottleConfig) -> Sou
         after_import=after_import,
         throttle=throttle,
         throttle_overrides=overrides,
+        poll_interval_seconds=poll_interval,
+        poll_interval_overridden=interval_overridden,
     )
 
 
-def _parse_user(raw: dict, default_throttle: ThrottleConfig) -> UserConfig:
+def _parse_user(raw: dict, default_throttle: ThrottleConfig, default_poll_interval: int) -> UserConfig:
     if not isinstance(raw, dict):
         raise ConfigError("each user must be a mapping")
     name = str(_require(raw, "name", "user"))
@@ -283,7 +300,8 @@ def _parse_user(raw: dict, default_throttle: ThrottleConfig) -> UserConfig:
         token_file=str(_require(dest_raw, "token_file", f"user {name} destination")),
     )
     sources_raw = raw.get("sources") or []
-    sources = tuple(_parse_source(name, s, default_throttle) for s in sources_raw)
+    sources = tuple(_parse_source(name, s, default_throttle, default_poll_interval)
+                    for s in sources_raw)
     seen = set()
     for s in sources:
         if s.name in seen:
@@ -304,10 +322,11 @@ def load_config(path: str) -> AppConfig:
         raise ConfigError(f"{path}: top level must be a mapping")
 
     throttle, _ = _merge_throttle(ThrottleConfig(), raw.get("throttle"), path)
+    poll_interval = int(raw.get("poll_interval_seconds", 180))
 
     # An empty user list is allowed: a fresh install starts with no users and
     # gets configured entirely through the web UI.
-    users = tuple(_parse_user(u, throttle) for u in raw.get("users") or [])
+    users = tuple(_parse_user(u, throttle, poll_interval) for u in raw.get("users") or [])
     names = [u.name for u in users]
     if len(names) != len(set(names)):
         raise ConfigError(f"{path}: duplicate user names")
@@ -323,7 +342,7 @@ def load_config(path: str) -> AppConfig:
     return AppConfig(
         users=users,
         throttle=throttle,
-        poll_interval_seconds=int(raw.get("poll_interval_seconds", 180)),
+        poll_interval_seconds=poll_interval,
         alert_after_hours=float(raw.get("alert_after_hours", 6)),
         realert_after_hours=float(raw.get("realert_after_hours", 24)),
         http_bind=str(raw.get("http_bind", "0.0.0.0")),

@@ -609,7 +609,7 @@ def _make_handler(app: AppState, db: Database):
             self._send_html(200, "Settings", f"""
 <h1>Global settings</h1>
 <form method='post' action='/config' class='card'>
-  <label>Poll interval (seconds)
+  <label>Poll interval (seconds) <span class='muted'>(default — override per source on its page)</span>
     <input name='poll_interval_seconds' type='number' min='30' value='{cfg.poll_interval_seconds}'></label>
   <label>Alert after (hours failing)
     <input name='alert_after_hours' type='number' step='0.5' value='{cfg.alert_after_hours}'></label>
@@ -669,7 +669,8 @@ do not survive a UI edit.</p>""")
     <option value='keep'>keep (copy — source untouched)</option>
     <option value='delete'>delete (move — expunge after confirmed import)</option>
   </select></label>
-  <div class='striplabel'>throttle override (blank = inherit global settings)</div>
+  <div class='striplabel'>overrides (blank = inherit global settings)</div>
+  <label>Poll interval (seconds, min 10) <input name='poll_interval_seconds' placeholder='inherit'></label>
   <label>Bandwidth limit (KB/s) <input name='throttle_bandwidth_limit_kbps' placeholder='inherit'></label>
   <label>Max messages per cycle <input name='throttle_max_messages_per_cycle' placeholder='inherit'></label>
   <label>Pause between messages (s) <input name='throttle_message_pause_seconds' placeholder='inherit'></label>
@@ -750,7 +751,10 @@ do not survive a UI edit.</p>""")
     <option value='keep' {'selected' if s.after_import == 'keep' else ''}>keep (copy — source untouched)</option>
     <option value='delete' {'selected' if s.after_import == 'delete' else ''}>delete (move — expunge after confirmed import)</option>
   </select></label>
-  <div class='striplabel'>throttle override (blank = inherit global settings)</div>
+  <div class='striplabel'>overrides (blank = inherit global settings)</div>
+  <label>Poll interval (seconds, min 10)
+    <input name='poll_interval_seconds' placeholder='inherit'
+           value='{s.poll_interval_seconds if s.poll_interval_overridden else ""}'></label>
   <label>Bandwidth limit (KB/s)
     <input name='throttle_bandwidth_limit_kbps' placeholder='inherit'
            value='{tvals.get("bandwidth_limit_kbps", "")}'></label>

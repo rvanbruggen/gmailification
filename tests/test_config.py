@@ -145,6 +145,27 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(src.throttle_overrides, ("max_messages_per_cycle",))
         self.assertEqual(cfg.throttle.max_messages_per_cycle, 10)
 
+    def test_per_source_poll_interval_override(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL + "        poll_interval_seconds: 60\n"
+                         + "\npoll_interval_seconds: 300\n")
+        src = cfg.users[0].sources[0]
+        self.assertEqual(src.poll_interval_seconds, 60)
+        self.assertTrue(src.poll_interval_overridden)
+        self.assertEqual(cfg.poll_interval_seconds, 300)
+
+    def test_poll_interval_inherits_global(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL + "\npoll_interval_seconds: 300\n")
+        src = cfg.users[0].sources[0]
+        self.assertEqual(src.poll_interval_seconds, 300)
+        self.assertFalse(src.poll_interval_overridden)
+
+    def test_too_small_poll_interval_rejected(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        with self.assertRaises(ConfigError):
+            self._load(MINIMAL + "        poll_interval_seconds: 5\n")
+
     def test_unknown_throttle_field_rejected(self):
         os.environ["TEST_GMAILIFICATION_PW"] = "x"
         with self.assertRaises(ConfigError):

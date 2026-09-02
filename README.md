@@ -69,7 +69,9 @@ stolen token could add mail to an inbox but never read it.
    └─────────────────────────────────────────────────────────────────┘
 ```
 
-One code path for all sources: IMAP polling (default every 3 minutes). Google
+One code path for all sources: IMAP polling (default every 3 minutes; each
+source can override its own interval — poll a 2FA-critical mailbox every
+minute and a sleepy club mailbox hourly). Google
 account sources authenticate with app passwords (still supported in 2026;
 requires 2-Step Verification), so the legacy Workspace accounts themselves are
 never reconfigured. Each destination account grants its own OAuth consent;

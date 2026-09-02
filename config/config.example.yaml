@@ -4,7 +4,8 @@
 # secrets; those live in .env / mounted files) but there is no reason to
 # publish it.
 
-poll_interval_seconds: 180      # how often to check the sources
+poll_interval_seconds: 180      # default source poll interval; each source may
+                                # override with its own poll_interval_seconds (min 10)
 alert_after_hours: 6            # alert when a source has been failing this long
 realert_after_hours: 24         # repeat the alert while still failing
 http_bind: 0.0.0.0              # LAN web interface
@@ -54,6 +55,7 @@ users:
         username: alice@isp.example
         password_env: GMAILIFICATION_SRC_ALICE_ISP
         label: Pulled/isp
+        # poll_interval_seconds: 60  # per-source override of the global interval
         # throttle:                   # per-source override; unset fields inherit
         #   max_messages_per_cycle: 100   # e.g. gentler pace for a big backfill
         #   bandwidth_limit_kbps: 512

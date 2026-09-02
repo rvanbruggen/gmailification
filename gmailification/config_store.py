@@ -167,6 +167,17 @@ class ConfigStore:
         if values.get("after_import", "").strip():
             entry["after_import"] = values["after_import"].strip()
 
+        if "poll_interval_seconds" in values:
+            text = values.get("poll_interval_seconds", "").strip()
+            if text:
+                try:
+                    entry["poll_interval_seconds"] = int(text)
+                except ValueError as exc:
+                    raise ConfigError(f"invalid poll_interval_seconds: {text!r}") from exc
+            else:
+                # Blank = revert to the global poll interval.
+                entry.pop("poll_interval_seconds", None)
+
         throttle_fields = (
             ("throttle_bandwidth_limit_kbps", "bandwidth_limit_kbps", int),
             ("throttle_max_messages_per_cycle", "max_messages_per_cycle", int),

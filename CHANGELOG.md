@@ -10,6 +10,20 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-02
+
+### Added
+- Per-source poll intervals: a source may set `poll_interval_seconds`
+  (minimum 10) to override the global default; the scheduler now tracks a
+  per-source due time and wakes for whatever is due, so a time-critical
+  mailbox can poll every minute while a quiet one polls hourly. Editable per
+  source in the web UI (blank = inherit the global interval).
+
+### Changed
+- The main loop sleeps until the earliest due source (capped at the global
+  interval so heartbeat/healthcheck stay fresh); forced polls (`POST /poll`)
+  still run immediately regardless of schedules.
+
 ## [0.5.0] - 2026-09-02
 
 ### Added

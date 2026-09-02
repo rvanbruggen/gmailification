@@ -142,6 +142,23 @@ class ConfigStoreTest(unittest.TestCase):
                 "name": "telenet", "throttle_max_messages_per_cycle": "lots",
             })
 
+    def test_upsert_source_poll_interval_set_and_clear(self):
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {"name": "telenet", "poll_interval_seconds": "60"})
+        cfg = self.store.write_raw(raw)
+        src = cfg.user("rik").sources[0]
+        self.assertEqual(src.poll_interval_seconds, 60)
+        self.assertTrue(src.poll_interval_overridden)
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {"name": "telenet", "poll_interval_seconds": ""})
+        cfg = self.store.write_raw(raw)
+        self.assertFalse(cfg.user("rik").sources[0].poll_interval_overridden)
+        # Sub-minimum values are rejected by validation, file untouched.
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {"name": "telenet", "poll_interval_seconds": "3"})
+        with self.assertRaises(ConfigError):
+            self.store.write_raw(raw)
+
     def test_edit_source_keeps_password_when_blank(self):
         raw = self.store.read_raw()
         self.store.upsert_source(raw, "rik", {

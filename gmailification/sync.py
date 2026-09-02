@@ -195,8 +195,12 @@ def run_cycle(
     db: Database,
     dests: dict[str, GmailDestination],
     only_user: str | None = None,
+    sources: list[SourceConfig] | None = None,
 ) -> CycleStats:
-    tasks: list[SourceConfig] = [
+    """Sync the given sources (or, by default, every source of every user,
+    optionally filtered to one user). The scheduler passes `sources` so each
+    source can run on its own poll interval."""
+    tasks: list[SourceConfig] = sources if sources is not None else [
         s for u in cfg.users if only_user in (None, u.name) for s in u.sources
     ]
     stats = CycleStats()

@@ -87,25 +87,47 @@ def main(argv: list[str] | None = None) -> int:
                     app.cfg.http_port)
 
     only_user = args.user
+    forced = False
+    next_run: dict[str, float] = {}  # source_key -> when it is next due
     try:
         while True:
             started = time.time()
             cfg, dests = app.snapshot()
-            stats = run_cycle(cfg, db, dests, only_user=only_user)
+            candidates = [s for u in cfg.users if only_user in (None, u.name)
+                          for s in u.sources]
+            # A forced poll (or --once) ignores schedules; otherwise each
+            # source runs on its own poll interval. Unknown sources (first
+            # loop, or newly configured) are due immediately.
+            if forced or args.once:
+                due = candidates
+            else:
+                due = [s for s in candidates if next_run.get(s.key, 0.0) <= started]
+            stats = run_cycle(cfg, db, dests, sources=due)
+            for s in due:
+                next_run[s.key] = time.time() + s.poll_interval_seconds
             check_and_alert(cfg, db, dests)
             db.prune_history(cfg.history_days)
             app.shared.last_cycle_at = time.time()
             write_heartbeat(cfg.heartbeat_file)
-            log.info("cycle done in %.1fs: %d imported, %d source(s) failing",
-                     time.time() - started, stats.imported, len(stats.failed))
+            if due:
+                log.info("cycle done in %.1fs: %d source(s) polled, %d imported, %d failing",
+                         time.time() - started, len(due), stats.imported, len(stats.failed))
             if args.once:
                 return 1 if stats.failed else 0
-            # Sleep until the next scheduled cycle, or an on-demand /poll.
-            if app.shared.force_event.wait(timeout=cfg.poll_interval_seconds):
+            # Sleep until the earliest due source — but wake at least every
+            # global interval so the heartbeat and healthcheck stay fresh.
+            now = time.time()
+            upcoming = [next_run.get(s.key, now) for u in cfg.users
+                        if args.user in (None, u.name) for s in u.sources]
+            wait = min(upcoming) - now if upcoming else cfg.poll_interval_seconds
+            wait = max(1.0, min(wait, cfg.poll_interval_seconds))
+            if app.shared.force_event.wait(timeout=wait):
                 only_user = app.shared.take_poll_request()
+                forced = True
                 log.info("on-demand poll requested (user=%s)", only_user or "all")
             else:
                 only_user = args.user
+                forced = False
     except KeyboardInterrupt:
         log.info("shutting down")
         return 0
