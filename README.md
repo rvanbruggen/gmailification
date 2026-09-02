@@ -39,7 +39,11 @@ mailboxes. Adding a user or a source is a config change, not a code change.
   permission needed), with a copy to the admin. OAuth breakage alerts the
   admin. Plus a Docker healthcheck and `/status` endpoint.
 - **Polite on shared broadband.** Optional throttling: bandwidth cap,
-  per-cycle message cap, inter-message pause (see `throttle:` in the config).
+  per-cycle message cap, inter-message pause — global defaults in `throttle:`,
+  overridable per source (so a bulk archive import can crawl while live
+  sources stay snappy). Big backfills drain incrementally: the UID cursor and
+  dedupe table make them restart-safe, and Gmail API rate-limit pushback
+  (429s) just retries with backoff and resumes next cycle.
 
 ### Trust note (read this if you share an instance)
 

@@ -615,7 +615,7 @@ def _make_handler(app: AppState, db: Database):
     <input name='alert_after_hours' type='number' step='0.5' value='{cfg.alert_after_hours}'></label>
   <label>Re-alert every (hours)
     <input name='realert_after_hours' type='number' step='0.5' value='{cfg.realert_after_hours}'></label>
-  <h2>Throttling</h2>
+  <h2>Throttling <span class='muted'>(defaults — override per source on its page)</span></h2>
   <label>Bandwidth limit (KB/s, 0 = unlimited)
     <input name='bandwidth_limit_kbps' type='number' value='{t.bandwidth_limit_kbps}'></label>
   <label>Max messages per source per cycle (0 = unlimited)
@@ -669,6 +669,10 @@ do not survive a UI edit.</p>""")
     <option value='keep'>keep (copy — source untouched)</option>
     <option value='delete'>delete (move — expunge after confirmed import)</option>
   </select></label>
+  <div class='striplabel'>throttle override (blank = inherit global settings)</div>
+  <label>Bandwidth limit (KB/s) <input name='throttle_bandwidth_limit_kbps' placeholder='inherit'></label>
+  <label>Max messages per cycle <input name='throttle_max_messages_per_cycle' placeholder='inherit'></label>
+  <label>Pause between messages (s) <input name='throttle_message_pause_seconds' placeholder='inherit'></label>
   <button type='submit'>Add source</button>
 </form>
 <form method='post' action='/users/{_esc(name)}/delete'
@@ -724,6 +728,7 @@ do not survive a UI edit.</p>""")
                                 f"<h1>{_esc(user)} / {_esc(sname)}</h1>"
                                 + history_html + _DISABLED_NOTICE)
                 return
+            tvals = {k: getattr(s.throttle, k) for k in s.throttle_overrides}
             self._send_html(200, f"Source {sname}", f"""
 <h1>{_esc(user)} / {_esc(sname)}</h1>
 {history_html}
@@ -745,6 +750,16 @@ do not survive a UI edit.</p>""")
     <option value='keep' {'selected' if s.after_import == 'keep' else ''}>keep (copy — source untouched)</option>
     <option value='delete' {'selected' if s.after_import == 'delete' else ''}>delete (move — expunge after confirmed import)</option>
   </select></label>
+  <div class='striplabel'>throttle override (blank = inherit global settings)</div>
+  <label>Bandwidth limit (KB/s)
+    <input name='throttle_bandwidth_limit_kbps' placeholder='inherit'
+           value='{tvals.get("bandwidth_limit_kbps", "")}'></label>
+  <label>Max messages per cycle
+    <input name='throttle_max_messages_per_cycle' placeholder='inherit'
+           value='{tvals.get("max_messages_per_cycle", "")}'></label>
+  <label>Pause between messages (s)
+    <input name='throttle_message_pause_seconds' placeholder='inherit'
+           value='{tvals.get("message_pause_seconds", "")}'></label>
   <button type='submit'>Save</button>
 </form>
 <form method='post' action='/users/{_esc(user)}/sources/{_esc(sname)}/delete'

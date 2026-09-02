@@ -203,7 +203,7 @@ def run_cycle(
     if not tasks:
         return stats
     with ThreadPoolExecutor(max_workers=min(8, len(tasks)), thread_name_prefix="sync") as pool:
-        futures = [pool.submit(sync_source, db, s, dests[s.user], cfg.throttle) for s in tasks]
+        futures = [pool.submit(sync_source, db, s, dests[s.user], s.throttle) for s in tasks]
         stats.results = [f.result() for f in futures]
     # A successful pass for a user (any source reached their Gmail) clears the
     # destination-health pseudo source.

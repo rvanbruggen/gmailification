@@ -106,6 +106,42 @@ class ConfigStoreTest(unittest.TestCase):
         self.assertEqual(on_disk[0], "INBOX")
         self.assertEqual(on_disk[1], {"name": "[Gmail]/Sent Mail", "place": "sent"})
 
+    def test_upsert_source_throttle_override_set_and_clear(self):
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {
+            "name": "telenet",
+            "throttle_max_messages_per_cycle": "50",
+            "throttle_bandwidth_limit_kbps": "",
+            "throttle_message_pause_seconds": "",
+        })
+        cfg = self.store.write_raw(raw)
+        src = cfg.user("rik").sources[0]
+        self.assertEqual(src.throttle.max_messages_per_cycle, 50)
+        self.assertEqual(src.throttle_overrides, ("max_messages_per_cycle",))
+        # Blanking all fields reverts the source to the global throttle.
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {
+            "name": "telenet",
+            "throttle_max_messages_per_cycle": "",
+            "throttle_bandwidth_limit_kbps": "",
+            "throttle_message_pause_seconds": "",
+        })
+        cfg = self.store.write_raw(raw)
+        self.assertEqual(cfg.user("rik").sources[0].throttle_overrides, ())
+        # A form without the throttle fields leaves an existing override alone.
+        raw = self.store.read_raw()
+        self.store.upsert_source(raw, "rik", {
+            "name": "telenet", "throttle_max_messages_per_cycle": "50",
+            "throttle_bandwidth_limit_kbps": "", "throttle_message_pause_seconds": "",
+        })
+        self.store.upsert_source(raw, "rik", {"name": "telenet", "host": "h2"})
+        cfg = self.store.write_raw(raw)
+        self.assertEqual(cfg.user("rik").sources[0].throttle.max_messages_per_cycle, 50)
+        with self.assertRaises(ConfigError):
+            self.store.upsert_source(raw, "rik", {
+                "name": "telenet", "throttle_max_messages_per_cycle": "lots",
+            })
+
     def test_edit_source_keeps_password_when_blank(self):
         raw = self.store.read_raw()
         self.store.upsert_source(raw, "rik", {

@@ -33,6 +33,28 @@ class FolderConfig:
 
 
 @dataclass(frozen=True)
+class ThrottleConfig:
+    """Keeps gmailification a polite background citizen on a shared broadband line.
+
+    bandwidth_limit_kbps: rough cap on transfer rate — after each message we
+    sleep for size/limit seconds (0 = unlimited).
+    max_messages_per_cycle: per source per cycle; the UID cursor persists, so
+    anything beyond the cap is simply picked up next cycle (0 = unlimited).
+    message_pause_seconds: fixed pause between messages (0 = none).
+
+    Defined globally under `throttle:`; a source can override any subset in
+    its own `throttle:` block (unset fields inherit the global values).
+    """
+
+    bandwidth_limit_kbps: int = 0
+    max_messages_per_cycle: int = 200
+    message_pause_seconds: float = 0.0
+
+
+_THROTTLE_FIELDS = ("bandwidth_limit_kbps", "max_messages_per_cycle", "message_pause_seconds")
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     user: str
     name: str
@@ -42,6 +64,10 @@ class SourceConfig:
     label: str
     port: int = 993
     folders: tuple[FolderConfig, ...] = (FolderConfig(name="INBOX"),)
+    # Effective throttle for this source (global values merged with this
+    # source's overrides); throttle_overrides names the overridden fields.
+    throttle: ThrottleConfig = ThrottleConfig()
+    throttle_overrides: tuple[str, ...] = ()
     # On the very first run for a folder, how many days of existing mail to
     # backfill. 0 (default) = only mail that arrives after gmailification starts.
     backfill_days: int = 0
@@ -71,22 +97,6 @@ class UserConfig:
     def destination_key(self) -> str:
         # Pseudo source_key used to track destination (OAuth) health.
         return f"{self.name}/_destination"
-
-
-@dataclass(frozen=True)
-class ThrottleConfig:
-    """Keeps gmailification a polite background citizen on a shared broadband line.
-
-    bandwidth_limit_kbps: rough cap on transfer rate — after each message we
-    sleep for size/limit seconds (0 = unlimited).
-    max_messages_per_cycle: per source per cycle; the UID cursor persists, so
-    anything beyond the cap is simply picked up next cycle (0 = unlimited).
-    message_pause_seconds: fixed pause between messages (0 = none).
-    """
-
-    bandwidth_limit_kbps: int = 0
-    max_messages_per_cycle: int = 200
-    message_pause_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -208,7 +218,28 @@ def format_folder_text(folders: tuple[FolderConfig, ...]) -> str:
     return "\n".join(lines)
 
 
-def _parse_source(user: str, raw: dict) -> SourceConfig:
+def _merge_throttle(base: ThrottleConfig, raw_t, context: str) -> tuple[ThrottleConfig, tuple[str, ...]]:
+    """Merge a (possibly partial) throttle mapping onto base; returns the
+    merged config plus which fields were overridden."""
+    if not raw_t:
+        return base, ()
+    if not isinstance(raw_t, dict):
+        raise ConfigError(f"{context}: throttle must be a mapping")
+    unknown = set(raw_t) - set(_THROTTLE_FIELDS)
+    if unknown:
+        raise ConfigError(f"{context}: unknown throttle field(s): {', '.join(sorted(unknown))}")
+    try:
+        merged = ThrottleConfig(
+            bandwidth_limit_kbps=int(raw_t.get("bandwidth_limit_kbps", base.bandwidth_limit_kbps)),
+            max_messages_per_cycle=int(raw_t.get("max_messages_per_cycle", base.max_messages_per_cycle)),
+            message_pause_seconds=float(raw_t.get("message_pause_seconds", base.message_pause_seconds)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{context}: invalid throttle value: {exc}") from exc
+    return merged, tuple(k for k in _THROTTLE_FIELDS if k in raw_t)
+
+
+def _parse_source(user: str, raw: dict, default_throttle: ThrottleConfig) -> SourceConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"user {user}: each source must be a mapping")
     name = str(_require(raw, "name", f"user {user} source"))
@@ -225,6 +256,7 @@ def _parse_source(user: str, raw: dict) -> SourceConfig:
     after_import = str(raw.get("after_import", "keep"))
     if after_import not in ("keep", "delete"):
         raise ConfigError(f"{context}: after_import must be 'keep' or 'delete', got {after_import!r}")
+    throttle, overrides = _merge_throttle(default_throttle, raw.get("throttle"), context)
     return SourceConfig(
         user=user,
         name=name,
@@ -236,10 +268,12 @@ def _parse_source(user: str, raw: dict) -> SourceConfig:
         folders=folder_cfgs,
         backfill_days=int(raw.get("backfill_days", 0)),
         after_import=after_import,
+        throttle=throttle,
+        throttle_overrides=overrides,
     )
 
 
-def _parse_user(raw: dict) -> UserConfig:
+def _parse_user(raw: dict, default_throttle: ThrottleConfig) -> UserConfig:
     if not isinstance(raw, dict):
         raise ConfigError("each user must be a mapping")
     name = str(_require(raw, "name", "user"))
@@ -249,7 +283,7 @@ def _parse_user(raw: dict) -> UserConfig:
         token_file=str(_require(dest_raw, "token_file", f"user {name} destination")),
     )
     sources_raw = raw.get("sources") or []
-    sources = tuple(_parse_source(name, s) for s in sources_raw)
+    sources = tuple(_parse_source(name, s, default_throttle) for s in sources_raw)
     seen = set()
     for s in sources:
         if s.name in seen:
@@ -269,22 +303,17 @@ def load_config(path: str) -> AppConfig:
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: top level must be a mapping")
 
+    throttle, _ = _merge_throttle(ThrottleConfig(), raw.get("throttle"), path)
+
     # An empty user list is allowed: a fresh install starts with no users and
     # gets configured entirely through the web UI.
-    users = tuple(_parse_user(u) for u in raw.get("users") or [])
+    users = tuple(_parse_user(u, throttle) for u in raw.get("users") or [])
     names = [u.name for u in users]
     if len(names) != len(set(names)):
         raise ConfigError(f"{path}: duplicate user names")
     emails = [u.destination.email for u in users]
     if len(emails) != len(set(emails)):
         raise ConfigError(f"{path}: two users share the same destination email")
-
-    throttle_raw = raw.get("throttle") or {}
-    throttle = ThrottleConfig(
-        bandwidth_limit_kbps=int(throttle_raw.get("bandwidth_limit_kbps", 0)),
-        max_messages_per_cycle=int(throttle_raw.get("max_messages_per_cycle", 200)),
-        message_pause_seconds=float(throttle_raw.get("message_pause_seconds", 0)),
-    )
 
     admin_raw = raw.get("admin") or {}
     admin_user = str(admin_raw.get("user", ""))

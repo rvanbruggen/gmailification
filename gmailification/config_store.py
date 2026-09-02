@@ -167,6 +167,26 @@ class ConfigStore:
         if values.get("after_import", "").strip():
             entry["after_import"] = values["after_import"].strip()
 
+        throttle_fields = (
+            ("throttle_bandwidth_limit_kbps", "bandwidth_limit_kbps", int),
+            ("throttle_max_messages_per_cycle", "max_messages_per_cycle", int),
+            ("throttle_message_pause_seconds", "message_pause_seconds", float),
+        )
+        if any(form_key in values for form_key, _, _ in throttle_fields):
+            overrides: dict = {}
+            for form_key, cfg_key, conv in throttle_fields:
+                text = values.get(form_key, "").strip()
+                if text:
+                    try:
+                        overrides[cfg_key] = conv(text)
+                    except ValueError as exc:
+                        raise ConfigError(f"invalid throttle value for {cfg_key}: {text!r}") from exc
+            if overrides:
+                entry["throttle"] = overrides
+            else:
+                # All fields left blank = revert to the global throttle.
+                entry.pop("throttle", None)
+
         password = values.get("password", "")
         password_env = values.get("password_env", "").strip()
         if password and password_env:

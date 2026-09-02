@@ -127,6 +127,28 @@ class ConfigTest(unittest.TestCase):
         cfg = self._load(MINIMAL + "\nthrottle:\n  bandwidth_limit_kbps: 512\n  max_messages_per_cycle: 10\n")
         self.assertEqual(cfg.throttle.bandwidth_limit_kbps, 512)
         self.assertEqual(cfg.throttle.max_messages_per_cycle, 10)
+        # Sources without their own block inherit the global values.
+        src = cfg.users[0].sources[0]
+        self.assertEqual(src.throttle, cfg.throttle)
+        self.assertEqual(src.throttle_overrides, ())
+
+    def test_per_source_throttle_override_merges_global(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        cfg = self._load(MINIMAL + """
+        throttle:
+          max_messages_per_cycle: 50
+""" + "\nthrottle:\n  bandwidth_limit_kbps: 512\n  max_messages_per_cycle: 10\n")
+        src = cfg.users[0].sources[0]
+        # Overridden field takes the source value; the rest inherit global.
+        self.assertEqual(src.throttle.max_messages_per_cycle, 50)
+        self.assertEqual(src.throttle.bandwidth_limit_kbps, 512)
+        self.assertEqual(src.throttle_overrides, ("max_messages_per_cycle",))
+        self.assertEqual(cfg.throttle.max_messages_per_cycle, 10)
+
+    def test_unknown_throttle_field_rejected(self):
+        os.environ["TEST_GMAILIFICATION_PW"] = "x"
+        with self.assertRaises(ConfigError):
+            self._load(MINIMAL + "\n        throttle:\n          speed: 9\n")
 
 
 if __name__ == "__main__":

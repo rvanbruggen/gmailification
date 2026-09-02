@@ -10,6 +10,18 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-02
+
+### Added
+- Per-source throttle overrides: a source's `throttle:` block overrides any
+  subset of the global `bandwidth_limit_kbps` / `max_messages_per_cycle` /
+  `message_pause_seconds`; unset fields inherit the global values. Editable
+  in the web UI on each source page (blank = inherit). Designed for large
+  one-off archive imports that should crawl while live sources stay fast.
+
+### Changed
+- Unknown fields in a `throttle:` block are now rejected at config load.
+
 ## [0.4.1] - 2026-09-02
 
 ### Added

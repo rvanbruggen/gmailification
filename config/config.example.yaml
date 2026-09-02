@@ -15,7 +15,9 @@ heartbeat_file: /data/heartbeat
 secrets_dir: /data/secrets      # passwords entered in the web UI land here (0600)
 history_days: 14                # how long to keep per-poll history for the UI charts
 
-# Be a polite citizen on a shared broadband line.
+# Be a polite citizen on a shared broadband line. These are the global
+# defaults; any source can override any subset with its own throttle: block
+# (handy for a large one-off archive import — see the README).
 throttle:
   bandwidth_limit_kbps: 0       # 0 = unlimited; e.g. 512 to cap at ~0.5 MB/s
   max_messages_per_cycle: 200   # per source per cycle; the rest follow next cycle
@@ -52,6 +54,9 @@ users:
         username: alice@isp.example
         password_env: GMAILIFICATION_SRC_ALICE_ISP
         label: Pulled/isp
+        # throttle:                   # per-source override; unset fields inherit
+        #   max_messages_per_cycle: 100   # e.g. gentler pace for a big backfill
+        #   bandwidth_limit_kbps: 512
 
   - name: bob
     destination:
