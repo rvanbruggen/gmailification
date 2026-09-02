@@ -147,6 +147,7 @@ def sync_source(
     throttle = throttle or ThrottleConfig()
     budget = throttle.max_messages_per_cycle or None
     result = SourceCycleResult(source_key=source.key, ok=True)
+    started = time.monotonic()
     try:
         def attempt():
             remaining = budget
@@ -162,6 +163,9 @@ def sync_source(
                         remaining = max(0, remaining - processed)
         retry(attempt, log=log)
         db.record_success(source.key, source.user)
+        db.record_poll(source.key, source.user, ok=True, imported=result.imported,
+                       dupes=result.skipped_dupes, deleted=result.deleted,
+                       duration=time.monotonic() - started)
         if result.imported or result.deleted:
             log.info("%s: imported %d message(s)%s%s", source.key, result.imported,
                      f", {result.skipped_dupes} duplicate(s) skipped" if result.skipped_dupes else "",
@@ -179,6 +183,10 @@ def sync_source(
         result.error = f"{type(exc).__name__}: {exc}"
         db.record_failure(source.key, source.user, result.error)
         log.error("%s: sync failed: %s", source.key, result.error)
+    if not result.ok:
+        db.record_poll(source.key, source.user, ok=False, imported=result.imported,
+                       dupes=result.skipped_dupes, deleted=result.deleted,
+                       duration=time.monotonic() - started, error=result.error)
     return result
 
 

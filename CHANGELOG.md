@@ -10,6 +10,23 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-02
+
+### Added
+- Poll history: every cycle is recorded per source (outcome, messages
+  imported/deduped/moved, duration, error) in SQLite, pruned after
+  `history_days` (default 14).
+- History visualization in the web UI: 24-hour strips per source on the
+  dashboard, 24-hour + N-day strips and a noteworthy-events table on each
+  source page, and a "Recent activity" feed on the dashboard. Tick state is
+  double-encoded (color + height) with text tooltips for accessibility.
+- `GET /history?hours=&source=` JSON endpoint (admin-authenticated).
+
+### Changed
+- Full web UI redesign: logo, header navigation, design tokens with dark-mode
+  support, cards, status pills, and restyled forms/tables — still pure
+  server-rendered HTML/CSS, no frameworks, no build step.
+
 ## [0.3.0] - 2026-09-02
 
 ### Added

@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             cfg, dests = app.snapshot()
             stats = run_cycle(cfg, db, dests, only_user=only_user)
             check_and_alert(cfg, db, dests)
+            db.prune_history(cfg.history_days)
             app.shared.last_cycle_at = time.time()
             write_heartbeat(cfg.heartbeat_file)
             log.info("cycle done in %.1fs: %d imported, %d source(s) failing",

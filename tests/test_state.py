@@ -56,6 +56,36 @@ class StateTest(unittest.TestCase):
         self.assertEqual(st.total_failure, 1)
         self.assertEqual(st.total_success, 1)
 
+    def test_poll_history_roundtrip_and_prune(self):
+        t0 = 1_000_000.0
+        self.db.record_poll("rik/telenet", "rik", ok=True, imported=2, duration=1.5, now=t0)
+        self.db.record_poll("rik/telenet", "rik", ok=True, now=t0 + 180)
+        self.db.record_poll("rik/trol", "rik", ok=False, error="boom", now=t0 + 200)
+        rows = self.db.history_since(0)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([r.ts for r in rows], sorted(r.ts for r in rows))
+        only_telenet = self.db.history_since(0, "rik/telenet")
+        self.assertEqual(len(only_telenet), 2)
+        self.assertEqual(only_telenet[0].imported, 2)
+        # since filter
+        self.assertEqual(len(self.db.history_since(t0 + 190)), 1)
+        # prune keeps recent, drops old: cutoff lands between t0+180 and t0+200
+        removed = self.db.prune_history(days=1, now=t0 + 190 + 86400)
+        self.assertEqual(removed, 2)
+        self.assertEqual(len(self.db.history_since(0)), 1)
+
+    def test_recent_events_only_noteworthy(self):
+        t0 = 1_000_000.0
+        self.db.record_poll("rik/telenet", "rik", ok=True, now=t0)          # quiet
+        self.db.record_poll("rik/telenet", "rik", ok=True, imported=3, now=t0 + 1)
+        self.db.record_poll("rik/telenet", "rik", ok=False, error="x", now=t0 + 2)
+        self.db.record_poll("rik/trol", "rik", ok=True, deleted=1, now=t0 + 3)
+        events = self.db.recent_events(limit=10)
+        self.assertEqual(len(events), 3)  # the quiet poll is excluded
+        self.assertEqual(events[0].ts, t0 + 3)  # newest first
+        only = self.db.recent_events(limit=10, source_key="rik/telenet")
+        self.assertEqual(len(only), 2)
+
     def test_failing_since_sticks_to_first_failure(self):
         self.db.record_failure("rik/telenet", "rik", "a", now=100.0)
         self.db.record_failure("rik/telenet", "rik", "b", now=200.0)

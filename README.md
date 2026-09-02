@@ -206,8 +206,12 @@ config and secrets mounted from the host, nothing else to deploy.
 `http://dockerhost:8377/` serves a small built-in web UI (no framework, no
 build step, served by the service itself):
 
-- **Dashboard** — per-user cards with Gmail token state and per-source health,
-  plus "Poll now" buttons (the *my-2FA-code-is-arriving-right-now* button).
+- **Dashboard** — per-user cards with Gmail token state, per-source health,
+  a 24-hour poll-history strip per source (green ticks = healthy polls, taller
+  = mail imported, red = failures), a recent-activity feed, and "Poll now"
+  buttons (the *my-2FA-code-is-arriving-right-now* button). Each source page
+  adds a multi-day strip and an event log. History is kept for `history_days`
+  (default 14) and also served as JSON at `/history`.
 - **Configuration** — add/remove users and sources, edit source settings
   (host, credentials, label, folders, backfill, copy-vs-move), global
   settings and throttling. Every edit is validated with the full config

@@ -148,6 +148,29 @@ class SyncTest(unittest.TestCase):
         result = self._run(throttle)
         self.assertEqual(result.imported, 1)
 
+    def test_poll_history_written_on_success_and_failure(self):
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", backfill_days=7,
+        )
+        self._run()
+        polls = self.db.history_since(0)
+        self.assertEqual(len(polls), 1)
+        self.assertTrue(polls[0].ok)
+        self.assertEqual(polls[0].imported, 3)
+
+        def boom(uid):
+            raise RuntimeError("nope")
+
+        FakeImap.mailbox[9] = _msg(9)
+        with mock.patch.object(FakeImap, "fetch_raw", side_effect=boom):
+            with mock.patch("gmailification.sync.ImapSource", FakeImap):
+                sync_source(self.db, self.source, self.dest)
+        polls = self.db.history_since(0)
+        self.assertEqual(len(polls), 2)
+        self.assertFalse(polls[-1].ok)
+        self.assertIn("nope", polls[-1].error)
+
     def test_failure_recorded_and_isolated(self):
         def boom(uid):
             raise RuntimeError("disk on fire")

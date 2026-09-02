@@ -13,6 +13,7 @@ oauth_client_file: /config/client_secret.json
 db_path: /data/gmailification.db
 heartbeat_file: /data/heartbeat
 secrets_dir: /data/secrets      # passwords entered in the web UI land here (0600)
+history_days: 14                # how long to keep per-poll history for the UI charts
 
 # Be a polite citizen on a shared broadband line.
 throttle:

@@ -45,6 +45,19 @@ CREATE TABLE IF NOT EXISTS source_status (
     total_failure        INTEGER NOT NULL DEFAULT 0,
     last_alert_at        REAL
 );
+CREATE TABLE IF NOT EXISTS poll_history (
+    source_key TEXT NOT NULL,
+    user       TEXT NOT NULL,
+    ts         REAL NOT NULL,
+    ok         INTEGER NOT NULL,
+    imported   INTEGER NOT NULL DEFAULT 0,
+    dupes      INTEGER NOT NULL DEFAULT 0,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    duration   REAL NOT NULL DEFAULT 0,
+    error      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_poll_history_source_ts ON poll_history (source_key, ts);
+CREATE INDEX IF NOT EXISTS idx_poll_history_ts ON poll_history (ts);
 """
 
 
@@ -52,6 +65,19 @@ CREATE TABLE IF NOT EXISTS source_status (
 class FolderState:
     uidvalidity: int
     last_uid: int
+
+
+@dataclass(frozen=True)
+class PollRecord:
+    source_key: str
+    user: str
+    ts: float
+    ok: bool
+    imported: int
+    dupes: int
+    deleted: int
+    duration: float
+    error: str | None
 
 
 @dataclass(frozen=True)
@@ -187,3 +213,50 @@ class Database:
         now = time.time() if now is None else now
         with self._conn() as conn:
             conn.execute("UPDATE source_status SET last_alert_at=? WHERE source_key=?", (now, source_key))
+
+    # -- poll history ------------------------------------------------------
+
+    def record_poll(self, source_key: str, user: str, *, ok: bool, imported: int = 0,
+                    dupes: int = 0, deleted: int = 0, duration: float = 0.0,
+                    error: str | None = None, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO poll_history
+                   (source_key, user, ts, ok, imported, dupes, deleted, duration, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source_key, user, now, 1 if ok else 0, imported, dupes, deleted,
+                 duration, (error or None) and error[:500]),
+            )
+
+    @staticmethod
+    def _poll_row(r) -> PollRecord:
+        return PollRecord(source_key=r["source_key"], user=r["user"], ts=r["ts"],
+                          ok=bool(r["ok"]), imported=r["imported"], dupes=r["dupes"],
+                          deleted=r["deleted"], duration=r["duration"], error=r["error"])
+
+    def history_since(self, since: float, source_key: str | None = None) -> list[PollRecord]:
+        """All poll records after `since`, oldest first."""
+        if source_key is None:
+            rows = self._conn().execute(
+                "SELECT * FROM poll_history WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+        else:
+            rows = self._conn().execute(
+                "SELECT * FROM poll_history WHERE ts >= ? AND source_key=? ORDER BY ts",
+                (since, source_key)).fetchall()
+        return [self._poll_row(r) for r in rows]
+
+    def recent_events(self, limit: int = 20, source_key: str | None = None) -> list[PollRecord]:
+        """Noteworthy polls (failures, or anything imported/deleted), newest first."""
+        query = ("SELECT * FROM poll_history WHERE (ok=0 OR imported>0 OR deleted>0)"
+                 + ("" if source_key is None else " AND source_key=?")
+                 + " ORDER BY ts DESC LIMIT ?")
+        args = (limit,) if source_key is None else (source_key, limit)
+        rows = self._conn().execute(query, args).fetchall()
+        return [self._poll_row(r) for r in rows]
+
+    def prune_history(self, days: float, now: float | None = None) -> int:
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM poll_history WHERE ts < ?", (now - days * 86400,))
+            return cur.rowcount

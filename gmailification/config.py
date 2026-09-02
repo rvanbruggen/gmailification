@@ -104,6 +104,7 @@ class AppConfig:
     secrets_dir: str = "/data/secrets"
     admin_user: str = ""
     admin_copy_alerts: bool = True
+    history_days: float = 14.0
 
     def user(self, name: str) -> UserConfig:
         for u in self.users:
@@ -304,4 +305,5 @@ def load_config(path: str) -> AppConfig:
         secrets_dir=str(raw.get("secrets_dir", "/data/secrets")),
         admin_user=admin_user,
         admin_copy_alerts=bool(admin_raw.get("copy_alerts", True)),
+        history_days=float(raw.get("history_days", 14)),
     )

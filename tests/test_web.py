@@ -112,6 +112,21 @@ class WebTest(unittest.TestCase):
         cfg, _ = self.app.snapshot()
         self.assertNotIn("trol", [s.name for s in cfg.user("rik").sources])
 
+    def test_history_endpoint(self):
+        self.db.record_poll("rik/histtest", "rik", ok=True, imported=2)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._request("/history", auth=False)
+        self.assertEqual(ctx.exception.code, 401)
+        payload = json.load(self._request("/history?hours=1&source=rik/histtest"))
+        self.assertEqual(len(payload["polls"]), 1)
+        self.assertEqual(payload["polls"][0]["imported"], 2)
+
+    def test_dashboard_renders_strip_and_activity(self):
+        self.db.record_poll("rik/telenet", "rik", ok=False, error="kaput")
+        html = self._request("/").read().decode()
+        self.assertIn("svg class='strip'", html.replace('"', "'"))
+        self.assertIn("kaput", html)
+
     def test_invalid_edit_returns_400(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._request("/users/rik/sources", data=b"name=nopw&host=h&username=u")
