@@ -10,6 +10,32 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-02
+
+### Changed
+- Faster Gmail imports: the API client is now cached per worker thread with
+  a keep-alive connection instead of being rebuilt (with a fresh TLS
+  handshake) for every imported message — the dominant per-message cost
+  during bulk backfills.
+- Non-blocking scheduler: sources run through a shared worker pool the
+  scheduler submits to without waiting, so one slow backlog import no longer
+  delays other sources' polls. `--once` keeps the synchronous behavior.
+
+### Added
+- Live poll status in the dashboard health column ("syncing now · 12m" /
+  "next poll in 45s") and a scheduler heartbeat + running-poll count in the
+  header.
+- `/healthz` now reports unhealthy if any single poll is stuck beyond 2 hours.
+
+## [0.6.3] - 2026-09-02
+
+### Fixed
+- The Docker healthcheck no longer flaps unhealthy while a legitimately long
+  throttled cycle (e.g. a multi-thousand-message backfill at 200/cycle) is
+  still running; a genuinely stuck cycle still trips it after 2 hours.
+- A 120s default socket timeout prevents a dead Gmail API connection from
+  hanging a sync thread indefinitely.
+
 ## [0.6.2] - 2026-09-02
 
 ### Fixed
