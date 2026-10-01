@@ -1,6 +1,7 @@
 """Main entrypoint: long-running poll loop + web interface.
 
     python -m gmailification [--config PATH] [--once] [--user NAME]
+    python -m gmailification --retry SOURCE_KEY FOLDER [UID ...]
 """
 
 from __future__ import annotations
@@ -50,11 +51,42 @@ def write_heartbeat(path: str) -> None:
         log.warning("cannot write heartbeat file %s: %s", path, exc)
 
 
+def queue_retries(app: AppState, db: Database, spec: list[str]) -> int:
+    """Hand-queue messages for the retry machinery, e.g. failures from before
+    the retry queue existed (their UIDs are in old log lines)."""
+    if len(spec) < 2:
+        log.error("--retry needs SOURCE_KEY FOLDER [UID ...]")
+        return 2
+    source_key, folder, uid_args = spec[0], spec[1], spec[2:]
+    known = {s.key for u in app.cfg.users for s in u.sources}
+    if source_key not in known:
+        log.error("unknown source %r (known: %s)", source_key, ", ".join(sorted(known)))
+        return 2
+    try:
+        uids = [int(u) for u in uid_args]
+    except ValueError:
+        log.error("UIDs must be integers")
+        return 2
+    state = db.get_folder_state(source_key, folder)
+    if uids and state is None:
+        log.error("%s has no state for folder %r yet", source_key, folder)
+        return 2
+    for uid in uids:
+        db.queue_retry(source_key, folder, state.uidvalidity, uid, "queued by hand")
+    n = db.requeue(source_key, folder, uids or None)
+    log.info("%s %s: %d message(s) due for retry on the next poll", source_key, folder, n)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gmailification")
     parser.add_argument("--config", default=os.environ.get("GMAILIFICATION_CONFIG", "/config/config.yaml"))
     parser.add_argument("--once", action="store_true", help="run a single cycle and exit")
     parser.add_argument("--user", default=None, help="limit syncing to one user")
+    parser.add_argument("--retry", nargs="+", metavar="ARG",
+                        help="SOURCE_KEY FOLDER [UID ...]: queue these UIDs (or, without "
+                             "UIDs, everything already queued for that folder) for an "
+                             "immediate retry by the running service, then exit")
     args = parser.parse_args(argv)
 
     setup_logging()
@@ -81,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
             "(safe before first successful run; afterwards chown it instead).",
             app.cfg.db_path, exc, os.getuid())
         return 2
+    if args.retry:
+        return queue_retries(app, db, args.retry)
     startup_token_check(app)
 
     server = None

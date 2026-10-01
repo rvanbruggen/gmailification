@@ -2,5 +2,6 @@ google-api-python-client>=2.140
 google-auth>=2.30
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
+httplib2>=0.19
 PyYAML>=6.0
 tzdata>=2024.1

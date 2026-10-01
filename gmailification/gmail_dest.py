@@ -11,6 +11,7 @@ can never read, modify or delete existing mail in the destination account.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import logging
@@ -19,7 +20,8 @@ import threading
 from email.message import EmailMessage
 from email.utils import formatdate
 
-from google.auth.exceptions import RefreshError
+import httplib2
+from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -172,15 +174,21 @@ class GmailDestination:
         if sent:
             ids.append("SENT")
         svc = self._service()
+        params = dict(userId="me", internalDateSource="dateHeader",
+                      neverMarkSpam=never_mark_spam, processForCalendar=False)
         media = MediaIoBaseUpload(io.BytesIO(raw), mimetype="message/rfc822", resumable=len(raw) > 4 * 1024 * 1024)
-        req = svc.users().messages().import_(
-            userId="me",
-            internalDateSource="dateHeader",
-            neverMarkSpam=never_mark_spam,
-            processForCalendar=False,
-            body={"labelIds": ids},
-            media_body=media,
-        )
+        try:
+            req = svc.users().messages().import_(
+                body={"labelIds": ids}, media_body=media, **params)
+        except UnicodeError:
+            # The client library builds the (non-resumable) multipart upload
+            # with Python's email generator, which chokes on a message/rfc822
+            # part containing raw 8-bit bytes — i.e. any message with an
+            # unencoded UTF-8 body or header. Send those base64-encoded in the
+            # JSON body instead; Gmail receives the identical bytes.
+            req = svc.users().messages().import_(
+                body={"labelIds": ids, "raw": base64.urlsafe_b64encode(raw).decode("ascii")},
+                **params)
         result = self._call(req.execute)
         return result["id"]
 
@@ -210,5 +218,8 @@ class GmailDestination:
             if status in (401, 403) and b"invalid_grant" in (exc.content or b""):
                 raise ReauthNeeded(self.user, str(exc)) from exc
             raise
-        except (ConnectionError, TimeoutError, OSError) as exc:
+        except (ConnectionError, TimeoutError, OSError,
+                httplib2.ServerNotFoundError, TransportError) as exc:
+            # ServerNotFoundError (DNS down, e.g. while the router reboots) is
+            # not an OSError, so it needs naming explicitly.
             raise TransientError(f"Gmail API network error for {self.user}: {exc}") from exc

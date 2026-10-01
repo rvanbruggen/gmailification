@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -93,6 +94,52 @@ class StateTest(unittest.TestCase):
         self.assertEqual(st.failing_since, 100.0)
         self.assertEqual(st.consecutive_failures, 2)
         self.assertEqual(st.last_error, "b")
+
+
+    def test_failed_import_is_not_delivered_and_can_be_upgraded(self):
+        self.db.record_import("rik", "mid:x", "rik/telenet", None, status="failed_permanent")
+        self.assertFalse(self.db.is_imported("rik", "mid:x"))
+        self.db.record_import("rik", "mid:x", "rik/telenet", "gm1")
+        self.assertTrue(self.db.is_imported("rik", "mid:x"))
+        # ...but a later failure never downgrades a real import.
+        self.db.record_import("rik", "mid:x", "rik/trol", None, status="failed_permanent")
+        self.assertTrue(self.db.is_imported("rik", "mid:x"))
+
+    def test_retry_queue_backoff(self):
+        self.db.record_retry_failure("rik/telenet", "INBOX", 1, 7, "boom", now=1000)
+        self.assertEqual(self.db.due_retries("rik/telenet", "INBOX", now=1000), [])
+        self.assertEqual(self.db.due_retries("rik/telenet", "INBOX", now=1000 + 900), [7])
+        self.db.record_retry_failure("rik/telenet", "INBOX", 1, 7, "boom", now=2000)
+        self.assertEqual(self.db.due_retries("rik/telenet", "INBOX", now=2000 + 900), [])
+        self.assertEqual(self.db.due_retries("rik/telenet", "INBOX", now=2000 + 3600), [7])
+        # Queueing again (e.g. by a sweep) keeps the existing schedule.
+        self.db.queue_retry("rik/telenet", "INBOX", 1, 7, now=2001)
+        self.assertEqual(self.db.retry_entries()[0].attempts, 2)
+        self.assertEqual(self.db.drop_stale_retries("rik/telenet", "INBOX", 2), 1)
+
+    def test_migrates_pre_0_8_folder_state(self):
+        os.unlink(self.path)
+        conn = sqlite3.connect(self.path)
+        conn.executescript("""
+            CREATE TABLE folder_state (source_key TEXT NOT NULL, folder TEXT NOT NULL,
+                uidvalidity INTEGER NOT NULL, last_uid INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL, PRIMARY KEY (source_key, folder));
+            CREATE TABLE imported_messages (user TEXT NOT NULL, dedupe_key TEXT NOT NULL,
+                source_key TEXT NOT NULL, gmail_id TEXT,
+                status TEXT NOT NULL DEFAULT 'imported', imported_at REAL NOT NULL,
+                PRIMARY KEY (user, dedupe_key));
+            INSERT INTO folder_state VALUES ('rik/a', 'INBOX', 1, 50, 9000);
+            INSERT INTO folder_state VALUES ('rik/b', 'INBOX', 1, 60, 9500);
+            INSERT INTO imported_messages VALUES ('rik', 'mid:1', 'rik/a', 'g', 'imported', 5000);
+            INSERT INTO imported_messages VALUES ('rik', 'mid:2', 'rik/a', 'g', 'imported', 6000);
+        """)
+        conn.commit()
+        conn.close()
+        db = Database(self.path)
+        a = db.get_folder_state("rik/a", "INBOX")
+        self.assertEqual((a.last_uid, a.watch_since, a.watch_from_uid), (50, 5000, None))
+        self.assertEqual(db.get_folder_state("rik/b", "INBOX").watch_since, 9500)
+        Database(self.path)  # second open: migration is idempotent
 
 
 if __name__ == "__main__":

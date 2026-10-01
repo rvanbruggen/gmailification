@@ -25,6 +25,15 @@ mailboxes. Adding a user or a source is a config change, not a code change.
   move semantics (`after_import: delete`): a message is expunged from the
   source *only after* its Gmail import succeeded and was recorded — anything
   that failed to transfer always stays put.
+- **Self-healing.** A message whose import fails goes into a retry queue and
+  is retried automatically with growing gaps (15 min, 1 h, 4 h, … then daily)
+  before it is parked as stuck; the source page lists the queue and has a
+  *Retry all now* button. In move mode each message is expunged right after
+  its import, so a connection lost mid-batch (say, a nightly router reboot)
+  can't strand it, and an hourly sweep picks up anything still left in the
+  source that arrived after the source was set up. Older mail is never
+  touched. To hand-queue specific messages:
+  `python -m gmailification --retry rik/telenet INBOX 1234 1235`.
 - **Narrowest possible Gmail access.** The OAuth scopes are
   `gmail.insert` + `gmail.labels`: gmailification can *add* mail and manage labels,
   and can never read, modify, or delete existing mail in anyone's Gmail.

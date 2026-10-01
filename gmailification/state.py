@@ -1,8 +1,8 @@
 """SQLite state store.
 
 Tracks per-source/per-folder IMAP position (UIDVALIDITY + last seen UID),
-a per-user Message-ID dedupe table so the sync is idempotent, and per-source
-health used for alerting. All timestamps are unix epoch seconds (UTC).
+a per-user Message-ID dedupe table so the sync is idempotent, a retry queue
+for messages that failed to import, and per-source health used for alerting. All timestamps are unix epoch seconds (UTC).
 
 Connections are per-thread (sync workers run in a thread pool); WAL mode keeps
 concurrent readers/writers safe.
@@ -58,13 +58,47 @@ CREATE TABLE IF NOT EXISTS poll_history (
 );
 CREATE INDEX IF NOT EXISTS idx_poll_history_source_ts ON poll_history (source_key, ts);
 CREATE INDEX IF NOT EXISTS idx_poll_history_ts ON poll_history (ts);
+CREATE TABLE IF NOT EXISTS retry_queue (
+    source_key      TEXT NOT NULL,
+    folder          TEXT NOT NULL,
+    uidvalidity     INTEGER NOT NULL,
+    uid             INTEGER NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at REAL,              -- NULL = given up
+    last_error      TEXT,
+    queued_at       REAL NOT NULL,
+    PRIMARY KEY (source_key, folder, uid)
+);
 """
+
+# A message that keeps failing is retried with growing gaps
+# (15 min, 1 h, 4 h, 16 h, then daily) and given up after MAX_RETRY_ATTEMPTS.
+MAX_RETRY_ATTEMPTS = 8
+
+
+def retry_delay(attempts: int) -> float:
+    return min(24 * 3600.0, 900.0 * 4 ** max(0, attempts - 1))
 
 
 @dataclass(frozen=True)
 class FolderState:
     uidvalidity: int
     last_uid: int
+    watch_since: float | None = None   # when we started watching this folder
+    watch_from_uid: int | None = None  # the cursor at that moment (if known)
+    last_sweep_at: float | None = None  # last leftover sweep (move mode)
+
+
+@dataclass(frozen=True)
+class RetryEntry:
+    source_key: str
+    folder: str
+    uidvalidity: int
+    uid: int
+    attempts: int
+    next_attempt_at: float | None
+    last_error: str | None
+    queued_at: float
 
 
 @dataclass(frozen=True)
@@ -100,6 +134,24 @@ class Database:
         self._local = threading.local()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(folder_state)")}
+        if "watch_since" not in cols:
+            conn.execute("ALTER TABLE folder_state ADD COLUMN watch_since REAL")
+            # Pre-existing folders: we started watching around the source's
+            # first recorded import; fall back to the last cursor update.
+            conn.execute(
+                """UPDATE folder_state SET watch_since = COALESCE(
+                       (SELECT MIN(imported_at) FROM imported_messages m
+                         WHERE m.source_key = folder_state.source_key),
+                       updated_at)""")
+        if "watch_from_uid" not in cols:
+            conn.execute("ALTER TABLE folder_state ADD COLUMN watch_from_uid INTEGER")
+        if "last_sweep_at" not in cols:
+            conn.execute("ALTER TABLE folder_state ADD COLUMN last_sweep_at REAL")
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -115,30 +167,50 @@ class Database:
 
     def get_folder_state(self, source_key: str, folder: str) -> FolderState | None:
         row = self._conn().execute(
-            "SELECT uidvalidity, last_uid FROM folder_state WHERE source_key=? AND folder=?",
+            "SELECT uidvalidity, last_uid, watch_since, watch_from_uid, last_sweep_at "
+            "FROM folder_state "
+            "WHERE source_key=? AND folder=?",
             (source_key, folder),
         ).fetchone()
         if row is None:
             return None
-        return FolderState(uidvalidity=row["uidvalidity"], last_uid=row["last_uid"])
+        return FolderState(uidvalidity=row["uidvalidity"], last_uid=row["last_uid"],
+                           watch_since=row["watch_since"], watch_from_uid=row["watch_from_uid"],
+                           last_sweep_at=row["last_sweep_at"])
 
     def set_folder_state(self, source_key: str, folder: str, uidvalidity: int, last_uid: int) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO folder_state (source_key, folder, uidvalidity, last_uid, updated_at)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO folder_state
+                   (source_key, folder, uidvalidity, last_uid, updated_at, watch_since,
+                    watch_from_uid)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(source_key, folder)
                    DO UPDATE SET uidvalidity=excluded.uidvalidity,
                                  last_uid=excluded.last_uid,
                                  updated_at=excluded.updated_at""",
-                (source_key, folder, uidvalidity, last_uid, time.time()),
+                (source_key, folder, uidvalidity, last_uid, time.time(), time.time(), last_uid),
             )
+
+    def set_watch_from_uid(self, source_key: str, folder: str, uid: int) -> None:
+        with self._conn() as conn:
+            conn.execute("UPDATE folder_state SET watch_from_uid=? WHERE source_key=? AND folder=?",
+                         (uid, source_key, folder))
+
+    def mark_swept(self, source_key: str, folder: str, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            conn.execute("UPDATE folder_state SET last_sweep_at=? WHERE source_key=? AND folder=?",
+                         (now, source_key, folder))
 
     # -- dedupe ------------------------------------------------------------
 
     def is_imported(self, user: str, dedupe_key: str) -> bool:
+        """True only if the message actually reached the user's Gmail — a
+        recorded failure must never count as delivered (move mode would
+        otherwise delete it from the source)."""
         row = self._conn().execute(
-            "SELECT 1 FROM imported_messages WHERE user=? AND dedupe_key=?",
+            "SELECT 1 FROM imported_messages WHERE user=? AND dedupe_key=? AND status='imported'",
             (user, dedupe_key),
         ).fetchone()
         return row is not None
@@ -148,11 +220,96 @@ class Database:
     ) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT OR IGNORE INTO imported_messages
+                """INSERT INTO imported_messages
                    (user, dedupe_key, source_key, gmail_id, status, imported_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user, dedupe_key) DO UPDATE SET
+                       source_key=excluded.source_key, gmail_id=excluded.gmail_id,
+                       status=excluded.status, imported_at=excluded.imported_at
+                   WHERE imported_messages.status != 'imported'""",
                 (user, dedupe_key, source_key, gmail_id, status, time.time()),
             )
+
+    # -- retry queue -------------------------------------------------------
+    # Messages whose import failed for a non-transient reason. The folder
+    # cursor still moves past them (one bad message must not block a mailbox),
+    # so this queue is what brings them back for another try.
+
+    def queue_retry(self, source_key: str, folder: str, uidvalidity: int, uid: int,
+                    error: str | None = None, now: float | None = None) -> None:
+        """Add a message to the queue, due immediately. No-op if already queued
+        (including given-up entries — a sweep must not resurrect those)."""
+        now = time.time() if now is None else now
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO retry_queue
+                   (source_key, folder, uidvalidity, uid, attempts, next_attempt_at,
+                    last_error, queued_at)
+                   VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
+                (source_key, folder, uidvalidity, uid, now, (error or None) and error[:500], now))
+
+    def record_retry_failure(self, source_key: str, folder: str, uidvalidity: int, uid: int,
+                             error: str, now: float | None = None, give_up: bool = False) -> int:
+        """Count a failed attempt and schedule the next one; returns attempts."""
+        now = time.time() if now is None else now
+        self.queue_retry(source_key, folder, uidvalidity, uid, error, now)
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT attempts FROM retry_queue WHERE source_key=? AND folder=? AND uid=?",
+                (source_key, folder, uid)).fetchone()
+            attempts = row["attempts"] + 1
+            done = give_up or attempts >= MAX_RETRY_ATTEMPTS
+            conn.execute(
+                """UPDATE retry_queue SET attempts=?, next_attempt_at=?, last_error=?,
+                       uidvalidity=?
+                   WHERE source_key=? AND folder=? AND uid=?""",
+                (attempts, None if done else now + retry_delay(attempts), error[:500],
+                 uidvalidity, source_key, folder, uid))
+        return attempts
+
+    def clear_retry(self, source_key: str, folder: str, uid: int) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM retry_queue WHERE source_key=? AND folder=? AND uid=?",
+                         (source_key, folder, uid))
+
+    def drop_stale_retries(self, source_key: str, folder: str, uidvalidity: int) -> int:
+        """Forget entries from an older UIDVALIDITY — their UIDs mean nothing now."""
+        with self._conn() as conn:
+            return conn.execute(
+                "DELETE FROM retry_queue WHERE source_key=? AND folder=? AND uidvalidity!=?",
+                (source_key, folder, uidvalidity)).rowcount
+
+    def due_retries(self, source_key: str, folder: str, now: float | None = None) -> list[int]:
+        now = time.time() if now is None else now
+        rows = self._conn().execute(
+            """SELECT uid FROM retry_queue WHERE source_key=? AND folder=?
+                 AND next_attempt_at IS NOT NULL AND next_attempt_at <= ? ORDER BY uid""",
+            (source_key, folder, now)).fetchall()
+        return [r["uid"] for r in rows]
+
+    def retry_entries(self, source_key: str | None = None) -> list[RetryEntry]:
+        query = "SELECT * FROM retry_queue"
+        args: tuple = ()
+        if source_key is not None:
+            query += " WHERE source_key=?"
+            args = (source_key,)
+        rows = self._conn().execute(query + " ORDER BY source_key, folder, uid", args).fetchall()
+        return [RetryEntry(**dict(r)) for r in rows]
+
+    def requeue(self, source_key: str, folder: str | None = None,
+                uids: list[int] | None = None, now: float | None = None) -> int:
+        """Make given-up (or not yet due) entries due now, with a fresh attempt budget."""
+        now = time.time() if now is None else now
+        query = "UPDATE retry_queue SET attempts=0, next_attempt_at=? WHERE source_key=?"
+        args: list = [now, source_key]
+        if folder is not None:
+            query += " AND folder=?"
+            args.append(folder)
+        if uids:
+            query += f" AND uid IN ({','.join('?' * len(uids))})"
+            args.extend(uids)
+        with self._conn() as conn:
+            return conn.execute(query, args).rowcount
 
     # -- source health -----------------------------------------------------
 

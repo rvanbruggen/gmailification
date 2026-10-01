@@ -15,6 +15,7 @@ import imaplib
 import re
 import socket
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 
 from .config import SourceConfig
@@ -119,10 +120,19 @@ class ImapSource:
                 ssl_context=ssl.create_default_context(),
             )
             self._client.login(self._cfg.username, self._cfg.password)
+            # Servers (Gmail among them) advertise extensions like UIDPLUS
+            # only after authentication; imaplib keeps the pre-login list.
+            typ, data = self._client.capability()
+            if typ == "OK" and data and data[-1]:
+                self._client.capabilities = tuple(data[-1].decode("ascii", "replace").upper().split())
         except (OSError, socket.timeout, ssl.SSLError) as exc:
             raise TransientError(f"IMAP connect to {self._cfg.host}: {exc}") from exc
         except imaplib.IMAP4.error as exc:
-            # Login failures are not transient — bad credentials need a human.
+            # RFC 5530 [UNAVAILABLE] means the server is temporarily down,
+            # not that the credentials are wrong.
+            if "UNAVAILABLE" in str(exc).upper():
+                raise TransientError(f"IMAP login at {self._cfg.host}: {exc}") from exc
+            # Other login failures are not transient — bad credentials need a human.
             raise ImapError(f"IMAP login for {self._cfg.username}@{self._cfg.host}: {exc}") from exc
         return self
 
@@ -234,6 +244,53 @@ class ImapSource:
         except (OSError, socket.timeout, imaplib.IMAP4.abort) as exc:
             raise TransientError(f"IMAP SEARCH SINCE: {exc}") from exc
         return parse_search_uids(self._check(typ, data, "UID SEARCH SINCE"))
+
+    def uids_received_since(self, ts: float, lo: int, hi: int) -> list[int]:
+        """UIDs in lo..hi of messages that arrived on or after the date of
+        `ts` (IMAP SINCE has day granularity)."""
+        if hi < lo:
+            return []
+        since = datetime.fromtimestamp(ts, timezone.utc).strftime("%d-%b-%Y")
+        try:
+            typ, data = self._client.uid("SEARCH", None, f"UID {lo}:{hi}", "SINCE", since)
+        except (OSError, socket.timeout, imaplib.IMAP4.abort) as exc:
+            raise TransientError(f"IMAP SEARCH SINCE: {exc}") from exc
+        # "lo:hi" is unordered in IMAP and "*"-free, but filter defensively.
+        return [u for u in parse_search_uids(self._check(typ, data, "UID SEARCH SINCE"))
+                if lo <= u <= hi]
+
+    def internal_dates(self, uids: list[int]) -> dict[int, float]:
+        """INTERNALDATE (arrival time, epoch seconds) per UID."""
+        dates: dict[int, float] = {}
+        for i in range(0, len(uids), 500):
+            chunk = uids[i:i + 500]
+            try:
+                typ, data = self._client.uid("FETCH", ",".join(map(str, chunk)), "(UID INTERNALDATE)")
+            except (OSError, socket.timeout, imaplib.IMAP4.abort) as exc:
+                raise TransientError(f"IMAP FETCH INTERNALDATE: {exc}") from exc
+            for item in self._check(typ, data, "UID FETCH INTERNALDATE"):
+                line = item[0] if isinstance(item, tuple) else item
+                if not isinstance(line, (bytes, bytearray)):
+                    continue
+                m = re.search(rb"UID (\d+)", line)
+                tt = imaplib.Internaldate2tuple(bytes(line))
+                if m and tt is not None:
+                    dates[int(m.group(1))] = time.mktime(tt)
+        return dates
+
+    def existing_uids(self, uids: list[int]) -> list[int]:
+        """The subset of `uids` still present in the selected folder."""
+        found: list[int] = []
+        for i in range(0, len(uids), 500):
+            chunk = uids[i:i + 500]
+            try:
+                typ, data = self._client.uid("SEARCH", None, "UID", ",".join(map(str, chunk)))
+            except (OSError, socket.timeout, imaplib.IMAP4.abort) as exc:
+                raise TransientError(f"IMAP SEARCH UID: {exc}") from exc
+            wanted = set(chunk)
+            found.extend(u for u in parse_search_uids(self._check(typ, data, "UID SEARCH UID"))
+                         if u in wanted)
+        return sorted(found)
 
     def fetch_raw(self, uid: int) -> bytes | None:
         """Fetch the raw message; returns None if it exceeds MAX_MESSAGE_BYTES."""

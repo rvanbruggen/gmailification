@@ -133,6 +133,25 @@ class WebTest(unittest.TestCase):
         self.assertIn("svg class='strip'", html.replace('"', "'"))
         self.assertIn("kaput", html)
 
+    def test_retry_queue_shown_and_requeueable(self):
+        self.db.record_retry_failure("rik/telenet", "INBOX", 1, 41, "UnicodeEncodeError: x")
+        self.db.record_retry_failure("rik/telenet", "INBOX", 1, 42, "Invalid attachment",
+                                     give_up=True)
+        try:
+            html = self._request("/").read().decode()
+            self.assertIn("1 to retry", html)
+            self.assertIn("1 stuck", html)
+            html = self._request("/users/rik/sources/telenet").read().decode()
+            self.assertIn("Retry queue", html)
+            self.assertIn("Invalid attachment", html)
+            self.assertIn("gave up", html)
+            self._request("/users/rik/sources/telenet/retry", data=b"")
+            self.assertEqual(sorted(self.db.due_retries("rik/telenet", "INBOX")), [41, 42])
+        finally:
+            for uid in (41, 42):
+                self.db.clear_retry("rik/telenet", "INBOX", uid)
+            self.app.shared.take_poll_request()
+
     def test_dashboard_shows_live_poll_status(self):
         import time
         now = time.time()

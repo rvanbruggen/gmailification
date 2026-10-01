@@ -10,6 +10,40 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-01
+
+### Fixed
+- Messages containing raw 8-bit (unencoded UTF-8) content failed to import
+  with "'ascii' codec can't encode characters": the Google client library's
+  multipart upload can't serialize them. They are now sent base64-encoded in
+  the request body instead, byte for byte identical. This was the main
+  reason messages piled up in move-mode sources.
+- Move mode no longer strands messages when the connection drops mid-batch
+  (e.g. a nightly router reboot): each message is expunged right after its
+  import instead of once at the end of the folder pass. Gmail forgets an
+  unexpunged `\Deleted` flag when the session ends, and the cursor had
+  already moved past those messages.
+- UIDPLUS is now detected after login (Gmail only advertises it then), so
+  expunges use precise `UID EXPUNGE` instead of a folder-wide `EXPUNGE`.
+- A DNS failure reaching the Gmail API (`Unable to find the server`) is
+  treated as transient instead of permanently failing the message.
+- An IMAP login answered with `[UNAVAILABLE]` is retried as transient.
+- A failed import recorded in the dedupe table no longer counts as delivered,
+  so the same message arriving through another source is still imported
+  (and is never deleted from a source on the strength of a failure).
+
+### Added
+- Retry queue: non-transient import failures are retried automatically with
+  backoff (15 min → daily, 8 attempts) instead of being skipped for good.
+  Shown on the dashboard ("N to retry" / "N stuck") and on the source page
+  with a *Retry all now* button; `--retry SOURCE_KEY FOLDER [UID ...]` queues
+  messages from the command line.
+- Leftover sweep for move-mode sources (hourly): anything still in the folder
+  below the cursor that arrived after the source was set up is queued for
+  another try. Already-imported leftovers are simply removed from the source.
+  Mail that predates the source is never touched (exact UID floor, derived
+  from arrival times for folders created before this version).
+
 ## [0.7.0] - 2026-09-02
 
 ### Changed

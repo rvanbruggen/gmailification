@@ -1,11 +1,13 @@
 import os
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 from gmailification.config import FolderConfig, SourceConfig, ThrottleConfig
-from gmailification.state import Database
+from gmailification.state import MAX_RETRY_ATTEMPTS, Database
 from gmailification.sync import sync_source
+from gmailification.util import TransientError
 
 
 def _msg(n: int) -> bytes:
@@ -45,6 +47,7 @@ class FakeImap:
 
     def expunge(self, uids):
         assert not self.selected_readonly, "EXPUNGE on a read-only folder"
+        FakeImap.expunge_calls.append(list(uids))
         for uid in list(FakeImap.flagged):
             self.mailbox.pop(uid, None)
         FakeImap.expunged.extend(FakeImap.flagged)
@@ -56,7 +59,20 @@ class FakeImap:
     def uids_since(self, days):
         return sorted(self.mailbox)
 
+    def uids_received_since(self, ts, lo, hi):
+        # Day granularity, like IMAP SINCE; unknown arrival = just now.
+        day = ts - ts % 86400
+        return sorted(u for u in self.mailbox
+                      if lo <= u <= hi and FakeImap.arrived.get(u, time.time()) >= day)
+
+    def internal_dates(self, uids):
+        return {u: FakeImap.arrived.get(u, time.time()) for u in uids}
+
+    def existing_uids(self, uids):
+        return sorted(u for u in uids if u in self.mailbox)
+
     def fetch_raw(self, uid):
+        FakeImap.fetched.append(uid)
         return self.mailbox[uid]
 
 
@@ -71,7 +87,7 @@ class FakeDest:
         return f"gmail-{len(self.imported)}"
 
 
-class SyncTest(unittest.TestCase):
+class _SyncBase(unittest.TestCase):
     def setUp(self):
         fd, self.dbpath = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -86,6 +102,9 @@ class SyncTest(unittest.TestCase):
         FakeImap.flagged = []
         FakeImap.expunged = []
         FakeImap.resolutions = {}
+        FakeImap.arrived = {}
+        FakeImap.fetched = []
+        FakeImap.expunge_calls = []
 
     def tearDown(self):
         for suffix in ("", "-wal", "-shm"):
@@ -98,6 +117,8 @@ class SyncTest(unittest.TestCase):
         with mock.patch("gmailification.sync.ImapSource", FakeImap):
             return sync_source(self.db, self.source, self.dest, throttle)
 
+
+class SyncTest(_SyncBase):
     def test_first_run_imports_nothing_but_sets_cursor(self):
         result = self._run()
         self.assertTrue(result.ok)
@@ -312,6 +333,182 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(FakeImap.mailbox, {})
         self.assertEqual(len(self.dest.imported), 3)  # no double import
         del keep_source
+
+
+
+class FlakyDest(FakeDest):
+    """Rejects the messages in `bad` (non-transiently) until fixed."""
+
+    def __init__(self, bad):
+        super().__init__()
+        self.bad = set(bad)
+
+    def import_raw(self, raw, label, **kwargs):
+        if raw in self.bad:
+            raise UnicodeEncodeError("ascii", "x", 0, 1, "ordinal not in range(128)")
+        return super().import_raw(raw, label, **kwargs)
+
+
+class ResilienceTest(_SyncBase):
+    """Failed imports and leftovers must eventually be retried and moved."""
+
+    def setUp(self):
+        super().setUp()
+        self.source = SourceConfig(
+            user="rik", name="telenet", host="h", username="u", password="test-password",
+            label="Pulled/telenet", after_import="delete",
+        )
+
+    def _age_retries(self, seconds):
+        with self.db._conn() as conn:
+            conn.execute("UPDATE retry_queue SET next_attempt_at = next_attempt_at - ?"
+                         " WHERE next_attempt_at IS NOT NULL", (seconds,))
+
+    def test_failed_import_is_retried_and_then_moved(self):
+        self._run()  # first run: cursor at 3
+        FakeImap.mailbox.update({4: _msg(4), 5: _msg(5)})
+        self.dest = FlakyDest({_msg(4)})
+        result = self._run()
+        self.assertEqual((result.imported, result.deleted), (1, 1))
+        self.assertIn(4, FakeImap.mailbox)  # failed one stays in the source
+        [entry] = self.db.retry_entries("rik/telenet")
+        self.assertEqual((entry.uid, entry.attempts), (4, 1))
+        self.assertIn("UnicodeEncodeError", entry.last_error)
+
+        # Not due yet: no refetch on the next poll.
+        FakeImap.fetched = []
+        self._run()
+        self.assertNotIn(4, FakeImap.fetched)
+
+        # Once due and the cause is fixed, it is imported and moved.
+        self.dest.bad.clear()
+        self._age_retries(3600)
+        result = self._run()
+        self.assertEqual((result.imported, result.deleted), (1, 1))
+        self.assertNotIn(4, FakeImap.mailbox)
+        self.assertEqual(self.db.retry_entries(), [])
+
+    def test_retry_gives_up_after_max_attempts(self):
+        self._run()
+        FakeImap.mailbox[4] = _msg(4)
+        self.dest = FlakyDest({_msg(4)})
+        self._run()
+        for _ in range(MAX_RETRY_ATTEMPTS + 2):
+            self._age_retries(10 * 86400)
+            self._run()
+        [entry] = self.db.retry_entries()
+        self.assertEqual(entry.attempts, MAX_RETRY_ATTEMPTS)
+        self.assertIsNone(entry.next_attempt_at)
+        # A manual requeue makes it due again.
+        self.assertEqual(self.db.requeue("rik/telenet"), 1)
+        self.dest.bad.clear()
+        self._run()
+        self.assertNotIn(4, FakeImap.mailbox)
+
+    def test_retry_for_vanished_message_is_dropped(self):
+        self._run()
+        FakeImap.mailbox[4] = _msg(4)
+        self.dest = FlakyDest({_msg(4)})
+        self._run()
+        del FakeImap.mailbox[4]  # user deleted it by hand
+        self._age_retries(3600)
+        result = self._run()
+        self.assertTrue(result.ok)
+        self.assertEqual(self.db.retry_entries(), [])
+
+    def test_eager_expunge_survives_connection_drop_mid_batch(self):
+        self._run()
+        FakeImap.mailbox.update({4: _msg(4), 5: _msg(5), 6: _msg(6)})
+
+        class DropAfterTwo(FakeDest):
+            def import_raw(self, raw, label, **kwargs):
+                if len(self.imported) == 2:
+                    raise TransientError("router rebooting")
+                return super().import_raw(raw, label, **kwargs)
+
+        self.dest = DropAfterTwo()
+        with mock.patch("gmailification.util.time.sleep"):
+            result = self._run()
+        self.assertFalse(result.ok)
+        # The two that reached Gmail are already gone from the source.
+        self.assertEqual(sorted(FakeImap.mailbox), [1, 2, 3, 6])
+        self.assertIn([4], FakeImap.expunge_calls)
+        self.dest = FakeDest()
+        result = self._run()
+        self.assertEqual((result.imported, result.deleted), (1, 1))
+        self.assertEqual(sorted(FakeImap.mailbox), [1, 2, 3])
+
+    def test_sweep_derives_floor_for_pre_0_8_state(self):
+        # Mail 1-3 arrived earlier on the day of setup; the folder state comes
+        # from a version that did not record the first-run cursor.
+        setup = time.time()
+        FakeImap.arrived = {1: setup - 60, 2: setup - 60, 3: setup - 60}
+        self._run()
+        with self.db._conn() as conn:
+            conn.execute("UPDATE folder_state SET watch_from_uid = NULL, last_sweep_at = NULL,"
+                         " watch_since = ?", (setup,))
+        FakeImap.mailbox[4] = _msg(4)
+        FakeImap.arrived[4] = setup + 60
+        self.db.set_folder_state("rik/telenet", "INBOX", 100, 4)  # 4 was skipped
+        result = self._run()
+        self.assertEqual(result.imported, 1)
+        self.assertEqual(sorted(FakeImap.mailbox), [1, 2, 3])
+        self.assertEqual(self.db.get_folder_state("rik/telenet", "INBOX").watch_from_uid, 3)
+
+    def test_sweep_spares_same_day_mail_from_before_setup(self):
+        # 1-3 arrived earlier today, before the source was configured.
+        self._run()
+        self.assertEqual(self.db.get_folder_state("rik/telenet", "INBOX").watch_from_uid, 3)
+        with self.db._conn() as conn:
+            conn.execute("UPDATE folder_state SET last_sweep_at = NULL")
+        self._run()
+        self.assertEqual(sorted(FakeImap.mailbox), [1, 2, 3])
+        self.assertEqual(self.db.retry_entries(), [])
+
+    def test_sweep_moves_leftovers_but_not_preexisting_mail(self):
+        # Mail 1-3 predates the source being set up (a week old); the folder
+        # state comes from an older version without a first-run cursor.
+        week_ago = time.time() - 7 * 86400
+        FakeImap.arrived = {1: week_ago, 2: week_ago, 3: week_ago}
+        self._run()
+        with self.db._conn() as conn:
+            conn.execute("UPDATE folder_state SET watch_from_uid = NULL")
+        # Leftovers from before this version: msg 4 failed (recorded only in
+        # the dedupe table, never queued), msg 5 was imported and flagged but
+        # its EXPUNGE was lost.
+        FakeImap.mailbox.update({4: _msg(4), 5: _msg(5)})
+        self.db.record_import("rik", "mid:m4@test", "rik/telenet", None, status="failed_permanent")
+        self.db.record_import("rik", "mid:m5@test", "rik/telenet", "gmail-x")
+        self.db.set_folder_state("rik/telenet", "INBOX", 100, 5)
+        with self.db._conn() as conn:
+            conn.execute("UPDATE folder_state SET last_sweep_at = NULL")
+        result = self._run()
+        self.assertTrue(result.ok)
+        self.assertEqual(self.dest.imported, [_msg(4)])  # 5 was already there
+        self.assertEqual(sorted(FakeImap.mailbox), [1, 2, 3])  # old mail untouched
+        self.assertEqual(self.db.retry_entries(), [])
+
+    def test_sweep_does_not_resurrect_given_up_messages(self):
+        self._run()
+        FakeImap.mailbox[4] = _msg(4)
+        self.dest = FlakyDest({_msg(4)})
+        self._run()
+        self.db.record_retry_failure("rik/telenet", "INBOX", 100, 4, "nope", give_up=True)
+        with self.db._conn() as conn:
+            conn.execute("UPDATE folder_state SET last_sweep_at = NULL")
+        FakeImap.fetched = []
+        self._run()
+        self.assertNotIn(4, FakeImap.fetched)
+
+    def test_failed_message_still_imported_via_other_source(self):
+        # A failure recorded in the dedupe table must not block the same
+        # message (same Message-ID) arriving through another path.
+        self.db.record_import("rik", "mid:m4@test", "rik/other", None, status="failed_permanent")
+        self._run()
+        FakeImap.mailbox[4] = _msg(4)
+        result = self._run()
+        self.assertEqual((result.imported, result.deleted), (1, 1))
+        self.assertTrue(self.db.is_imported("rik", "mid:m4@test"))
 
 
 if __name__ == "__main__":

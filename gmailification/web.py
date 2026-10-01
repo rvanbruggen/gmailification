@@ -458,6 +458,12 @@ def _make_handler(app: AppState, db: Database):
                         and parts[4] == "delete"):
                     self._mutate(lambda raw: app.store.delete_source(raw, parts[1], parts[3]))
                     self._redirect(f"/users/{parts[1]}")
+                elif (len(parts) == 5 and parts[0] == "users" and parts[2] == "sources"
+                        and parts[4] == "retry"):
+                    n = db.requeue(f"{parts[1]}/{parts[3]}")
+                    log.info("%s/%s: %d queued message(s) set to retry now", parts[1], parts[3], n)
+                    app.shared.request_poll(parts[1])
+                    self._redirect(f"/users/{parts[1]}/sources/{parts[3]}")
                 elif len(parts) == 4 and parts[0] == "users" and parts[2] == "oauth":
                     if parts[3] == "start":
                         self._oauth_start(parts[1])
@@ -540,6 +546,9 @@ def _make_handler(app: AppState, db: Database):
             by_source: dict[str, list] = {}
             for rec in db.history_since(day_ago):
                 by_source.setdefault(rec.source_key, []).append(rec)
+            retry_by_source: dict[str, list] = {}
+            for entry in db.retry_entries():
+                retry_by_source.setdefault(entry.source_key, []).append(entry)
             body = ["<h1>Dashboard</h1>"]
             if not self._editable:
                 body.append(_DISABLED_NOTICE)
@@ -578,6 +587,15 @@ def _make_handler(app: AppState, db: Database):
                                     else f"next poll in {wait_s:.0f}s" if wait_s < 120
                                     else f"next poll in {wait_s / 60:.0f}m")
                         health += f"<div class='muted' style='font-size:.72rem'>{activity}</div>"
+                    queued = retry_by_source.get(s.key, [])
+                    waiting = sum(1 for e in queued if e.next_attempt_at is not None)
+                    stuck = len(queued) - waiting
+                    if waiting:
+                        health += (f" <span class='pill p-warn' title='import failed; retried "
+                                   f"automatically'>{waiting} to retry</span>")
+                    if stuck:
+                        health += (f" <span class='pill p-bad' title='gave up after repeated "
+                                   f"failures; see the source page'>{stuck} stuck</span>")
                     mode = "move" if s.after_import == "delete" else "copy"
                     strip = _strip_svg(by_source.get(s.key, []), day_ago, now,
                                        buckets=48, tzname=cfg.timezone)
@@ -748,7 +766,30 @@ do not survive a UI edit.</p>""")
                    + (f", {e.dupes} duplicate(s) skipped" if e.dupes else "") + "</td>")
                 + "</tr>"
                 for e in events)
-            history_html = f"""
+            retry_html = ""
+            entries = db.retry_entries(key)
+            if entries:
+                gave_up = "<span class='pill p-bad'>gave up</span>"
+                rrows = "".join(
+                    f"<tr><td>{_esc(e.folder)}</td><td>{e.uid}</td><td>{e.attempts}</td>"
+                    f"<td>{_esc(_fmt_ts(e.next_attempt_at, cfg.timezone)) if e.next_attempt_at else gave_up}</td>"
+                    f"<td class='muted'>{_esc((e.last_error or '')[:140])}</td></tr>"
+                    for e in entries)
+                button = (f"<form class='inline' method='post' "
+                          f"action='/users/{_esc(user)}/sources/{_esc(sname)}/retry'>"
+                          f"<button type='submit'>Retry all now</button></form>"
+                          if self._editable else "")
+                retry_html = f"""
+<h2>Retry queue</h2>
+<div class='card'>
+<p class='muted'>Messages whose import failed. They stay in the source and are
+retried automatically with increasing gaps; after repeated failures they are
+parked as <em>gave up</em>.</p>
+<table><tr><th>folder</th><th>uid</th><th>attempts</th><th>next try</th><th>last error</th></tr>
+{rrows}</table>
+{button}
+</div>"""
+            history_html = retry_html + f"""
 <div class='card'>
   <div class='striplabel'>last 24 hours</div>{day}
   <div class='striplabel'>last {span_days} days</div>{longer}
