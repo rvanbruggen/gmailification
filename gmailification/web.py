@@ -450,6 +450,7 @@ def _make_handler(app: AppState, db: Database):
                     self._redirect(f"/users/{form.get('name', '').strip()}")
                 elif len(parts) == 3 and parts[0] == "users" and parts[2] == "delete":
                     self._mutate(lambda raw: app.store.delete_user(raw, parts[1]))
+                    db.forget_user(parts[1])
                     self._redirect("/")
                 elif len(parts) == 3 and parts[0] == "users" and parts[2] == "sources":
                     self._mutate(lambda raw: app.store.upsert_source(raw, parts[1], form))
@@ -457,6 +458,7 @@ def _make_handler(app: AppState, db: Database):
                 elif (len(parts) == 5 and parts[0] == "users" and parts[2] == "sources"
                         and parts[4] == "delete"):
                     self._mutate(lambda raw: app.store.delete_source(raw, parts[1], parts[3]))
+                    db.forget_source(f"{parts[1]}/{parts[3]}")
                     self._redirect(f"/users/{parts[1]}")
                 elif (len(parts) == 5 and parts[0] == "users" and parts[2] == "sources"
                         and parts[4] == "retry"):

@@ -10,6 +10,17 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-14
+
+### Fixed
+- Deleting a source (or user) in the web UI no longer leaves it sending
+  "has been failing" alert emails forever. Its health row stayed in the
+  database with `failing_since` set, and since nothing polled it again it
+  re-alerted every `realert_after_hours`. Alerts now only go out for sources
+  still in the config, and deleting a source or user also clears its health
+  and retry-queue state (dedupe records are kept, so re-adding the same
+  mailbox won't re-import mail).
+
 ## [0.8.0] - 2026-10-01
 
 ### Fixed

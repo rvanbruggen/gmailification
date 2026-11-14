@@ -50,9 +50,24 @@ def _format_alert(cfg: AppConfig, st: SourceStatus, now: float) -> tuple[str, st
     return subject, "\n".join(lines)
 
 
+def configured_keys(cfg: AppConfig) -> set[str]:
+    """Every source_key the current config can produce health rows for."""
+    keys: set[str] = set()
+    for u in cfg.users:
+        keys.add(u.destination_key)
+        keys.update(s.key for s in u.sources)
+    return keys
+
+
 def check_and_alert(cfg: AppConfig, db: Database, dests: dict[str, GmailDestination]) -> None:
     now = time.time()
+    # Only alert on sources/destinations that still exist in the config: a
+    # deleted source's health row lingers in the DB with failing_since set
+    # (nothing ever polls it again to clear it) and would re-alert forever.
+    live = configured_keys(cfg)
     for st in db.statuses_needing_alert(cfg.alert_after_hours, cfg.realert_after_hours, now):
+        if st.source_key not in live:
+            continue
         subject, body = _format_alert(cfg, st, now)
         delivered = False
         targets: list[GmailDestination] = []

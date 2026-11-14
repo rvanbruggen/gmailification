@@ -347,6 +347,23 @@ class Database:
                 (now, now, error[:2000], source_key),
             )
 
+    def forget_source(self, source_key: str) -> None:
+        """Drop health and retry-queue state for a source that was deleted from
+        the config. Dedupe records and folder cursors are kept so re-adding the
+        same mailbox later doesn't re-import mail that is already in Gmail."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM source_status WHERE source_key=?", (source_key,))
+            conn.execute("DELETE FROM retry_queue WHERE source_key=?", (source_key,))
+
+    def forget_user(self, user: str) -> None:
+        """forget_source() for every source of a deleted user, plus its
+        destination health row."""
+        prefix = user + "/"
+        with self._conn() as conn:
+            conn.execute("DELETE FROM source_status WHERE user=?", (user,))
+            conn.execute("DELETE FROM retry_queue WHERE substr(source_key, 1, ?) = ?",
+                         (len(prefix), prefix))
+
     def all_statuses(self) -> list[SourceStatus]:
         rows = self._conn().execute("SELECT * FROM source_status").fetchall()
         return [SourceStatus(**dict(r)) for r in rows]

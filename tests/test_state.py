@@ -57,6 +57,23 @@ class StateTest(unittest.TestCase):
         self.assertEqual(st.total_failure, 1)
         self.assertEqual(st.total_success, 1)
 
+    def test_forget_source_and_user(self):
+        for key in ("rik/telenet", "rik/trol", "rik/_destination"):
+            self.db.record_failure(key, "rik", "boom")
+            self.db.queue_retry(key, "INBOX", 1, 1, "x")
+        self.db.record_failure("rikky/telenet", "rikky", "boom")
+        self.db.queue_retry("rikky/telenet", "INBOX", 1, 1, "x")
+        self.db.record_import("rik", "mid:abc", "rik/telenet", "gm1")
+        self.db.forget_source("rik/telenet")
+        keys = {s.source_key for s in self.db.all_statuses()}
+        self.assertNotIn("rik/telenet", keys)
+        self.assertIn("rik/trol", keys)
+        self.assertEqual(self.db.retry_entries("rik/telenet"), [])
+        self.assertTrue(self.db.is_imported("rik", "mid:abc"))  # dedupe kept
+        self.db.forget_user("rik")
+        self.assertEqual({s.source_key for s in self.db.all_statuses()}, {"rikky/telenet"})
+        self.assertEqual({e.source_key for e in self.db.retry_entries()}, {"rikky/telenet"})
+
     def test_poll_history_roundtrip_and_prune(self):
         t0 = 1_000_000.0
         self.db.record_poll("rik/telenet", "rik", ok=True, imported=2, duration=1.5, now=t0)

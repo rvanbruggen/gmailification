@@ -107,10 +107,14 @@ class WebTest(unittest.TestCase):
         cfg, _ = self.app.snapshot()
         src = next(s for s in cfg.user("rik").sources if s.name == "trol")
         self.assertEqual(src.after_import, "delete")
-        # Delete.
+        # Delete. Lingering health/retry state for it is forgotten too.
+        self.db.record_failure("rik/trol", "rik", "boom")
+        self.db.queue_retry("rik/trol", "INBOX", 1, 7, "x")
         self._request("/users/rik/sources/trol/delete", data=b"")
         cfg, _ = self.app.snapshot()
         self.assertNotIn("trol", [s.name for s in cfg.user("rik").sources])
+        self.assertNotIn("rik/trol", [st.source_key for st in self.db.all_statuses()])
+        self.assertEqual(self.db.retry_entries("rik/trol"), [])
 
     def test_favicon_served_without_auth(self):
         resp = self._request("/favicon.svg", auth=False)
