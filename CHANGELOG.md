@@ -10,6 +10,12 @@ is reported by the service at startup (log line), in the `/healthz` and
 
 ## [Unreleased]
 
+### Added
+- `docker-compose.yml` now includes an `autoheal` service
+  (`willfarrell/autoheal`) that restarts the gmailification container when its
+  healthcheck reports it unhealthy. Docker's `restart:` policy only covers
+  containers that exit; a hung process stayed down until restarted by hand.
+
 ## [0.8.1] - 2026-11-14
 
 ### Fixed

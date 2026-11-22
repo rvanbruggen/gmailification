@@ -4,6 +4,10 @@ services:
     image: gmailification:latest
     container_name: gmailification
     restart: unless-stopped
+    labels:
+      # Watched by the autoheal service below: restarted when the Docker
+      # healthcheck reports it unhealthy (e.g. hung without exiting).
+      - autoheal=true
     env_file:
       - .env
     environment:
@@ -22,6 +26,22 @@ services:
       # Docker host is reachable from outside your LAN, restrict this
       # (e.g. "127.0.0.1:8377:8377" or firewall it).
       - "8377:8377"
+
+  autoheal:
+    # Docker itself never acts on an "unhealthy" status; this restarts any
+    # container labelled autoheal=true when its healthcheck fails. Only
+    # gmailification carries that label, so other containers on the host are
+    # left alone. Needs the Docker socket, i.e. control over Docker on this host.
+    image: willfarrell/autoheal:1.2.0
+    container_name: gmailification-autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      - AUTOHEAL_INTERVAL=60
+      # Leave the app time to start (its healthcheck has a 30s start period).
+      - AUTOHEAL_START_PERIOD=120
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   gmailification-data:
